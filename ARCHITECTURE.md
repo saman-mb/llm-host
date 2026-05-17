@@ -8,11 +8,12 @@
 flowchart TB
     subgraph Clients
         OC["OpenCode TUI<br/>(localhost)"]
-        NAS["Hermes Agent<br/>(on NAS, over LAN)"]
+        NAS["Hermes Agent<br/>(on NAS, over Tailscale)"]
+        PHONE["iPhone · Enchanted app<br/>(anywhere, over Tailscale)"]
     end
 
     subgraph FD["Framework Desktop · Fedora 44"]
-        FW["firewalld :8080/tcp<br/>+ avahi (mDNS: framework.local)"]
+        FW["firewalld :8080/tcp<br/>+ avahi (mDNS: framework.local)<br/>+ tailscaled (tailnet: framework)"]
 
         subgraph SD["systemd --user (linger=on)"]
             SVC["llama-server.service<br/>Restart=always<br/>ExecStart=bin/serve"]
@@ -37,7 +38,8 @@ flowchart TB
     end
 
     OC -- "HTTP localhost:8080/v1" --> FW
-    NAS -- "HTTP framework.local:8080/v1" --> FW
+    NAS -- "HTTP framework:8080/v1" --> FW
+    PHONE -- "HTTP framework:8080/v1<br/>(WireGuard)" --> FW
     FW --> SVC
 
     classDef cli fill:#1e3a5f,stroke:#4a90e2,color:#fff
@@ -118,15 +120,17 @@ The `llama-server.service` (in `~/.config/systemd/user/`) wraps the toolbox invo
 The unit calls `bin/serve`, which sources `config.sh` and runs `toolbox run -c llama-vulkan-radv bash runners/llama-server.sh`. That nested script is what actually invokes `llama-server` with all the right flags.
 
 ### 8. Network exposure
-- **Bind:** `--host 0.0.0.0 --port 8080` so it's reachable from the LAN
-- **Firewall:** `firewall-cmd --add-port=8080/tcp` (permanent)
-- **Discovery:** `avahi-daemon` advertises this box as `framework.local` via mDNS (with `docker0` excluded so it doesn't broadcast the wrong IP)
-- **Auth:** none — relies on LAN trust. Don't expose to the public internet without a reverse proxy
+- **Bind:** `--host 0.0.0.0 --port 8080` so it's reachable from any network interface
+- **Firewall:** `firewall-cmd --add-port=8080/tcp` (permanent) — for LAN access
+- **LAN discovery:** `avahi-daemon` advertises this box as `framework.local` via mDNS (with `docker0` excluded so it doesn't broadcast the wrong IP)
+- **Tailnet exposure:** `tailscaled` brings up a `tailscale0` WireGuard interface; `0.0.0.0` bind means llama-server is automatically reachable on the tailnet IP (`100.114.x.x`) and MagicDNS name (`framework`). No port forwarding, no public IP exposure.
+- **Auth:** none on llama-server itself. Trust model: LAN devices + tailnet devices. Tailscale handles auth/encryption for off-network access.
 
 ### 9. Clients
 - **OpenCode (TUI)** runs on this same machine, hits `http://127.0.0.1:8080/v1`
-- **Hermes agent on the NAS** hits `http://framework.local:8080/v1` over LAN
-- Both use the OpenAI-compatible API surface, so any tool that speaks OpenAI works
+- **Hermes agent on the NAS** hits `http://framework:8080/v1` over Tailscale (or `framework.local` over LAN as fallback)
+- **iPhone (Enchanted app)** hits `http://framework:8080/v1` over Tailscale — works from cellular / any network
+- All use the OpenAI-compatible API surface, so any tool that speaks OpenAI works
 
 ## Request flow (one query, end to end)
 

@@ -47,11 +47,19 @@ scripts/benchmark.sh        # measure pp + tg tok/s
 2. Edit `config.sh` and update `MODEL_PATH`.
 3. `scripts/restart.sh`.
 
-## API for the NAS agent
+## API for the NAS agent / iPhone / anywhere
+
+Three ways to reach the server, in order of preference:
+
+| Where you are | URL | Notes |
+|---|---|---|
+| On the same machine | `http://127.0.0.1:8080/v1` | Loopback, fastest |
+| Any tailnet device (recommended) | `http://framework:8080/v1` | Works from anywhere — home, cellular, abroad. WireGuard-encrypted. Setup: `setup/07-tailscale.sh` |
+| Same LAN, no Tailscale | `http://framework.local:8080/v1` | mDNS — only works on the same broadcast domain |
 
 ```
-endpoint: http://<framework-desktop-ip>:8080/v1
 api_key:  any string (server doesn't authenticate)
+model:    any string (server only has one model loaded)
 ```
 
 For Qwen3.6 (which has hybrid thinking), agent clients should send:
@@ -87,6 +95,14 @@ See [`setup/README.md`](setup/README.md). Idempotent — safe to re-run.
   memory. Confirm with `dmesg | grep 'GTT memory'`.
 - **Auto-suspend disabled:** GNOME defaults to suspending after 15 min idle,
   which kills downloads and breaks LAN access. `setup/03-power.sh` turns it off.
-- **DHCP IP shifts on reboot.** Set a static lease in the router for the
-  NAS-facing MAC, or front this with Tailscale, so the agent's endpoint stays
-  stable.
+- **DHCP IP shifts on reboot.** Tailscale solves this — `framework:8080`
+  resolves consistently regardless of LAN IP changes. Use mDNS
+  (`framework.local`) as a LAN-only fallback. Don't depend on the raw `10.0.0.x`
+  IP — it will change.
+
+## Mobile / off-network access
+
+With Tailscale set up (`setup/07-tailscale.sh`), you can chat with the model
+from your phone over cellular, from another house, anywhere. Recommended iOS
+client: [Enchanted](https://apps.apple.com/app/enchanted-llm/id6474268307)
+(free, open source, native). Point it at `http://framework:8080/v1`.

@@ -10,6 +10,7 @@ sudo systemctl reboot    # ← required, kernel params + groups need it
 ./04-firewall.sh         # open port 8080
 ./05-create-toolbox.sh   # pull vulkan-radv image, create container
 ./06-install-service.sh  # install + enable llama-server.service
+./07-tailscale.sh        # optional: reach this box from anywhere via tailnet
 ```
 
 Then download a model and verify:
