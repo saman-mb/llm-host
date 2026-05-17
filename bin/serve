@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Launcher used by the systemd user service. Sources config, enters the
+# toolbox, and runs the actual llama-server invocation.
+set -e
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO/config.sh"
+
+exec /usr/bin/toolbox run -c "$TOOLBOX" bash "$REPO/runners/llama-server.sh"
