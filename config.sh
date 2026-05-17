@@ -12,5 +12,5 @@ PORT="8080"
 # it: per-slot context = CONTEXT / N_PARALLEL. OpenCode's system prompt +
 # tools already eats ~8K, so don't go below ~32K per slot.
 CONTEXT="262144"
-N_PARALLEL="4"
-EXTRA_FLAGS="-ngl 999 -fa 1 --no-mmap --jinja --chat-template-kwargs {\"enable_thinking\":false}"
+N_PARALLEL="2"
+EXTRA_FLAGS="-ngl 999 -fa 1 --no-mmap --jinja --reasoning auto --reasoning-format deepseek --reasoning-budget 2048"
