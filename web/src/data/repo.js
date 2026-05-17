@@ -13,12 +13,11 @@ export default {
     { id: "overview", label: "Overview" },
     { id: "architecture", label: "Architecture" },
     { id: "layers", label: "Layers" },
+    { id: "setup", label: "Setup" },
     { id: "config", label: "Config" },
     { id: "scripts", label: "Scripts" },
-    { id: "setup", label: "Setup" },
-    { id: "commits", label: "Commits" },
-    { id: "files", label: "Files" },
-    { id: "troubleshooting", label: "Troubleshooting" }
+    { id: "troubleshooting", label: "Troubleshooting" },
+    { id: "repository", label: "Repository" }
   ],
   
   stats: [

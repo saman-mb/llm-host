@@ -7,9 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server:dev": "node server/index.js",
+    "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {
+    "express": "^5.2.1",
     "mermaid": "^11.15.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

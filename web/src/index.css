@@ -5,6 +5,10 @@
   --color-surface-50: #f8fafc;
   --color-surface-100: #f1f5f9;
   --color-surface-200: #e2e8f0;
+  --color-surface-300: #cbd5e1;
+  --color-surface-400: #94a3b8;
+  --color-surface-500: #64748b;
+  --color-surface-600: #475569;
   --color-surface-700: #334155;
   --color-surface-800: #1e293b;
   --color-surface-900: #0f172a;
@@ -14,6 +18,9 @@
   --color-accent-dark: #2563eb;
   --color-card: #ffffff;
   --color-card-border: #e2e8f0;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
 }
 
 html { scroll-behavior: smooth; }
@@ -23,3 +30,49 @@ body { background: var(--color-surface-50); color: var(--color-surface-800); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-surface-200); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-surface-700); }
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out;
+}
+
+/* ── Mermaid Diagram Styles ── */
+.mermaid-diagram {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.mermaid-diagram rect[role="node"],
+.mermaid-diagram g.node > rect {
+  rx: 8px !important;
+  ry: 8px !important;
+}
+
+.mermaid-diagram g.node {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.35))
+          drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.mermaid-diagram line,
+.mermaid-diagram path {
+  stroke-width: 2px !important;
+}
+
+.mermaid-diagram .subgraphDiv {
+  rx: 14px !important;
+  ry: 14px !important;
+}
+
+.mermaid-diagram .subgraphTitle {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+}
+
+.mermaid-diagram .nodeLabel {
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}

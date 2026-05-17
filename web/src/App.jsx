@@ -3,20 +3,21 @@ import Sidebar from './components/Sidebar';
 import Hero from './components/Hero';
 import Architecture from './components/Architecture';
 import Layers from './components/Layers';
+import Setup from './components/Setup';
 import Config from './components/Config';
 import Scripts from './components/Scripts';
-import Setup from './components/Setup';
-import Commits from './components/Commits';
-import Files from './components/Files';
 import Troubleshooting from './components/Troubleshooting';
+import Repository from './components/Repository';
 import Footer from './components/Footer';
+import ScrollProgress from './components/ScrollProgress';
+import BackToTop from './components/BackToTop';
 
 export default function App() {
   const [activeSection, setActiveSection] = useState('overview');
 
   useEffect(() => {
     const handleScroll = () => {
-      const sections = ['overview', 'architecture', 'layers', 'config', 'scripts', 'setup', 'commits', 'files', 'troubleshooting'];
+      const sections = ['overview', 'architecture', 'layers', 'setup', 'config', 'scripts', 'troubleshooting', 'repository'];
       for (const id of sections.reverse()) {
         const el = document.getElementById(id);
         if (el && el.getBoundingClientRect().top <= 150) {
@@ -30,20 +31,23 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex">
-      <Sidebar activeSection={activeSection} setActiveSection={setActiveSection} />
-      <main className="md:ml-72 flex-1">
-        <Hero />
-        <Architecture />
-        <Layers />
-        <Config />
-        <Scripts />
-        <Setup />
-        <Commits />
-        <Files />
-        <Troubleshooting />
-        <Footer />
-      </main>
-    </div>
+    <>
+      <ScrollProgress />
+      <div className="flex">
+        <Sidebar activeSection={activeSection} setActiveSection={setActiveSection} />
+        <main className="md:ml-72 flex-1">
+          <Hero />
+          <Architecture />
+          <Layers />
+          <Setup />
+          <Config />
+          <Scripts />
+          <Troubleshooting />
+          <Repository />
+          <Footer />
+        </main>
+      </div>
+      <BackToTop />
+    </>
   );
 }
