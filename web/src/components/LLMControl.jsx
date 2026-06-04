@@ -6,36 +6,100 @@ const STATUS_INTERVAL = 10000; // 10 seconds
 
 function useLLMStatus() {
   const [running, setRunning] = useState(false);
+  const [model, setModel] = useState(null);
+  const [gpuMode, setGpuMode] = useState(null); // 'llm' | 'image'
+  const [comfyui, setComfyui] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/status`);
-        const data = await res.json();
-        if (!cancelled) {
-          setRunning(data.running);
-          setError(null);
-        }
-      } catch {
-        if (!cancelled) {
-          setError('Unable to reach server');
-        }
-      }
-    };
-
-    fetchStatus();
-    const interval = setInterval(fetchStatus, STATUS_INTERVAL);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/status`);
+      const data = await res.json();
+      setRunning(data.running);
+      setModel(data.model || null);
+      setGpuMode(data.gpuMode || null);
+      setComfyui(!!data.comfyui);
+      setError(null);
+    } catch {
+      setError('Unable to reach server');
+    }
   }, []);
 
-  return { running, error };
+  useEffect(() => {
+    refresh();
+    const interval = setInterval(refresh, STATUS_INTERVAL);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  return { running, model, gpuMode, comfyui, error, refresh };
+}
+
+// Switch which app owns the iGPU via the control server.
+function useGpuMode(refresh) {
+  const [switching, setSwitching] = useState(null); // 'llm' | 'image' | null
+
+  const switchMode = useCallback(async (mode) => {
+    setSwitching(mode);
+    try {
+      await fetch(`${API_BASE}/gpu-mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      // Give systemd a moment, then refresh status.
+      setTimeout(() => refresh(), 1500);
+      setTimeout(() => refresh(), 4000);
+    } catch {
+      /* status poll will surface any error */
+    } finally {
+      setTimeout(() => setSwitching(null), 4000);
+    }
+  }, [refresh]);
+
+  return { switching, switchMode };
+}
+
+// Load the model registry and switch which model llama-server loads.
+function useModels(refresh) {
+  const [models, setModels] = useState([]);
+  const [active, setActive] = useState(null);
+  const [switchingTo, setSwitchingTo] = useState(null); // model key | null
+
+  const loadModels = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/models`);
+      const data = await res.json();
+      if (Array.isArray(data.models)) {
+        setModels(data.models);
+        setActive(data.active || null);
+      }
+    } catch {
+      /* leave the picker empty — switching just won't be offered */
+    }
+  }, []);
+
+  useEffect(() => { loadModels(); }, [loadModels]);
+
+  const switchModel = useCallback(async (key) => {
+    setSwitchingTo(key);
+    setActive(key); // optimistic
+    try {
+      await fetch(`${API_BASE}/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: key }),
+      });
+      // Reloading the model takes a while; nudge status + registry a few times.
+      setTimeout(() => { refresh(); loadModels(); }, 2000);
+      setTimeout(() => { refresh(); loadModels(); }, 6000);
+    } catch {
+      loadModels(); // revert optimistic state to the truth
+    } finally {
+      setTimeout(() => setSwitchingTo(null), 6000);
+    }
+  }, [refresh, loadModels]);
+
+  return { models, active, switchingTo, switchModel };
 }
 
 function useLLMControl() {
@@ -91,8 +155,10 @@ function Spinner() {
 }
 
 export default function LLMControl() {
-  const { running, error } = useLLMStatus();
+  const { running, model, gpuMode, comfyui, error, refresh } = useLLMStatus();
   const { action, message, msgType, execute } = useLLMControl();
+  const { switching, switchMode } = useGpuMode(refresh);
+  const { models, active, switchingTo, switchModel } = useModels(refresh);
   const [showPollingError, setShowPollingError] = useState(false);
 
   const isProcessing = action !== null;
@@ -129,6 +195,87 @@ export default function LLMControl() {
 
         {/* Body */}
         <div className="px-5 py-5">
+          {/* Loaded model */}
+          {model && (
+            <div className="mb-4 flex items-center gap-2 text-xs">
+              <span className="uppercase tracking-wide text-slate-400">Model</span>
+              <span className="font-mono text-slate-700 break-all">{model}</span>
+              {!running && <span className="text-slate-400">(configured)</span>}
+            </div>
+          )}
+
+          {/* Model picker — switch which model llama-server loads */}
+          {models.length > 1 && (
+            <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs uppercase tracking-wide text-slate-400">Model</span>
+                {switchingTo && <span className="text-xs text-slate-500">restarting…</span>}
+              </div>
+              <div className="flex flex-col gap-2">
+                {models.map((m) => {
+                  const isActive = m.key === active;
+                  return (
+                    <button
+                      key={m.key}
+                      onClick={() => switchModel(m.key)}
+                      disabled={!m.exists || switchingTo !== null || isActive}
+                      title={m.exists ? m.file : 'model file not found'}
+                      className={`
+                        flex items-center justify-between gap-2 px-4 py-2 rounded-lg border text-sm text-left transition-colors
+                        ${isActive
+                          ? 'border-green-500 bg-green-50 text-green-800'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}
+                        ${(!m.exists || (switchingTo && !isActive)) ? 'opacity-50 cursor-not-allowed' : ''}
+                      `}
+                    >
+                      <span className="font-medium">{m.key}</span>
+                      <span className="flex items-center gap-2">
+                        {switchingTo === m.key && <Spinner />}
+                        {isActive && <span className="text-xs">● active</span>}
+                        {!m.exists && <span className="text-xs text-red-500">missing</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Switching restarts llama-server; the new model takes a minute or two to load.
+              </p>
+            </div>
+          )}
+
+          {/* GPU mode toggle — Qwen and ComfyUI share one iGPU */}
+          <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs uppercase tracking-wide text-slate-400">GPU mode</span>
+              <a href="http://localhost:8188" target="_blank" rel="noreferrer"
+                 className="text-xs text-blue-600 hover:underline">
+                ComfyUI {comfyui ? '●' : '○'} ↗
+              </a>
+            </div>
+            <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm font-medium">
+              <button
+                onClick={() => switchMode('llm')}
+                disabled={switching !== null}
+                className={`px-4 py-1.5 transition-colors ${gpuMode === 'llm' ? 'bg-green-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'} ${switching ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                {switching === 'llm' ? 'Switching…' : 'LLM (Qwen)'}
+              </button>
+              <button
+                onClick={() => switchMode('image')}
+                disabled={switching !== null}
+                className={`px-4 py-1.5 transition-colors border-l border-slate-300 ${gpuMode === 'image' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'} ${switching ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                {switching === 'image' ? 'Switching…' : 'Image (ComfyUI)'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              {gpuMode === 'image'
+                ? 'Qwen stopped — iGPU free for ComfyUI image generation.'
+                : 'Qwen has the iGPU. Switch to Image to free it for ComfyUI (one at a time).'}
+            </p>
+          </div>
+
           {/* Description */}
           <p className="text-sm text-slate-600 mb-5 leading-relaxed">
             {running ? (

@@ -3,14 +3,55 @@
 
 TOOLBOX="llama-vulkan-radv"
 
-MODEL_PATH="$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
+# --- Model registry ----------------------------------------------------------
+# friendly key | absolute path to the .gguf. The FIRST entry is the default
+# used when nothing has been selected yet. Switch between them from the website
+# or the GNOME taskbar (both write the chosen key to MODEL_STATE_FILE), or run
+# `scripts/set-model.sh <key>`.
+MODELS=(
+  "qwen3-next-80b|$HOME/models/qwen3-next-80b-a3b-instruct/Qwen3-Next-80B-A3B-Instruct-Q5_K_M.gguf"
+  "gemma-4-26b|$HOME/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf"
+  "qwen3.6-35b-a3b|$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q6_K.gguf"
+  "qwen3.6-35b-a3b-ud|$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q6_K.gguf"
+  "qwen3.6-27b|$HOME/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
+)
+
+# Where the active model key is persisted between restarts.
+MODEL_STATE_FILE="${MODEL_STATE_FILE:-$HOME/.config/llm-host/model}"
 
 HOST="0.0.0.0"
 PORT="8080"
 
 # CONTEXT is the TOTAL token budget across all slots. llama-server divides
-# it: per-slot context = CONTEXT / N_PARALLEL. OpenCode's system prompt +
-# tools already eats ~8K, so don't go below ~32K per slot.
-CONTEXT="524288"
-N_PARALLEL="2"
-EXTRA_FLAGS="-ngl 999 -fa 1 --no-mmap --jinja --reasoning auto --reasoning-format deepseek --reasoning-budget 2048"
+# it: per-slot context = CONTEXT / N_PARALLEL. Keep a single large slot for
+# agent stability; parallel long-running generations have hit llama.cpp's
+# timeout/cancel + prompt-cache abort path on this build.
+CONTEXT="262144"
+N_PARALLEL="1"
+EXTRA_FLAGS="-ngl 999 -fa 1 --no-mmap --jinja --reasoning auto --reasoning-format auto --reasoning-budget 2048 --timeout 3600 --cache-ram 0 --no-cache-idle-slots --ctx-checkpoints 0 --checkpoint-every-n-tokens -1"
+
+# Per-model CONTEXT overrides (keyed by model key). Models with no entry use
+# the CONTEXT default above. (Both current models train on a 262144 window,
+# so neither needs an override — this is here for future models.)
+declare -A MODEL_CONTEXT=()
+
+# --- Resolve the active model ------------------------------------------------
+# Read the persisted selection; fall back to the first registry entry.
+_llm_selected=""
+[ -f "$MODEL_STATE_FILE" ] && _llm_selected="$(cat "$MODEL_STATE_FILE" 2>/dev/null)"
+
+ACTIVE_MODEL=""
+MODEL_PATH=""
+for _llm_entry in "${MODELS[@]}"; do
+  _llm_key="${_llm_entry%%|*}"
+  _llm_path="${_llm_entry#*|}"
+  # First entry seeds the default; an exact match overrides it.
+  if [ -z "$ACTIVE_MODEL" ]; then ACTIVE_MODEL="$_llm_key"; MODEL_PATH="$_llm_path"; fi
+  if [ "$_llm_key" = "$_llm_selected" ]; then ACTIVE_MODEL="$_llm_key"; MODEL_PATH="$_llm_path"; fi
+done
+unset _llm_selected _llm_entry _llm_key _llm_path
+
+# Apply a per-model context override if one is set for the active model.
+if [ -n "${MODEL_CONTEXT[$ACTIVE_MODEL]:-}" ]; then
+  CONTEXT="${MODEL_CONTEXT[$ACTIVE_MODEL]}"
+fi

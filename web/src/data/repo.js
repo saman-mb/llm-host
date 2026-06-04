@@ -108,13 +108,14 @@ export default {
   },
   
   scripts: [
-    { name: "status.sh", desc: "Is it running, what model, what endpoint", usage: "scripts/status.sh", example: "Shows systemd status, listening port, health check, model name, context size, and LAN endpoint" },
+    { name: "status.sh", desc: "Is it running, what model, what endpoint", usage: "scripts/status.sh", example: "Shows systemd status, listening port, health check, model name, context size, and LAN endpoint", run: "status" },
     { name: "logs.sh", desc: "Tail logs", usage: "scripts/logs.sh", example: "exec tail -F ~/.local/share/llama-server.log" },
     { name: "restart.sh", desc: "After editing config.sh or runner", usage: "scripts/restart.sh", example: "Restarts systemd service, polls health for 30s, reports ready or failure" },
-    { name: "test-api.sh", desc: "Smoke test /v1/chat/completions", usage: "scripts/test-api.sh", example: "Sends PONG request, reports reply + tokens/s" },
-    { name: "benchmark.sh", desc: "Measure pp + tg tok/s", usage: "scripts/benchmark.sh", example: "Generates ~256 tokens, reports prompt tokens, completion tokens, prompt tokens/s, tokens/s" },
+    { name: "test-api.sh", desc: "Smoke test /v1/chat/completions", usage: "scripts/test-api.sh", example: "Sends PONG request, reports reply + tokens/s", run: "test-api" },
+    { name: "benchmark.sh", desc: "Measure pp + tg tok/s", usage: "scripts/benchmark.sh", example: "Generates ~256 tokens, reports prompt tokens, completion tokens, prompt tokens/s, tokens/s", run: "benchmark" },
+    { name: "sync-model.sh", desc: "Propagate the live model id into Hermes + OpenCode configs", usage: "scripts/sync-model.sh [id|path]", example: "Auto-detects the served model from /v1/models and updates ~/.hermes/config.yaml + ~/.config/opencode/opencode.json (backs up each)", run: "sync-model" },
     { name: "download-model.sh", desc: "Download GGUF from HuggingFace", usage: "scripts/download-model.sh <hf-repo> <filename> [slug]", example: "scripts/download-model.sh unsloth/Qwen3.6-35B-A3B-GGUF Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf" },
-    { name: "test-tools.sh", desc: "Test tool call format (agent compatibility)", usage: "scripts/test-tools.sh", example: "Simulates agent request with get_weather + search_web tools, checks OpenAI-format tool_calls output" }
+    { name: "test-tools.sh", desc: "Test tool call format (agent compatibility)", usage: "scripts/test-tools.sh", example: "Simulates agent request with get_weather + search_web tools, checks OpenAI-format tool_calls output", run: "test-tools" }
   ],
   
   setup: [
@@ -149,6 +150,7 @@ export default {
     { path: "scripts/logs.sh", type: "file" },
     { path: "scripts/restart.sh", type: "file" },
     { path: "scripts/status.sh", type: "file" },
+    { path: "scripts/sync-model.sh", type: "file" },
     { path: "scripts/test-api.sh", type: "file" },
     { path: "scripts/test-tools.sh", type: "file" },
     { path: "setup/01-kernel-params.sh", type: "file" },

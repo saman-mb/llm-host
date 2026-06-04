@@ -1,0 +1,20 @@
+[Unit]
+Description=ComfyUI (ROCm) image-generation server on Strix Halo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/ComfyUI
+# Default dynamic-VRAM behaviour (no --gpu-only/--highvram): the model is
+# released from the iGPU when idle, so this can run persistently without
+# blocking llama-server. The /api/gpu-mode toggle calls ComfyUI's POST /free
+# to force-release VRAM before starting Qwen.
+ExecStart=%h/dev/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/.local/share/comfyui.log
+StandardError=append:%h/.local/share/comfyui.log
+
+[Install]
+WantedBy=default.target

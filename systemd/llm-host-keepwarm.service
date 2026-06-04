@@ -1,0 +1,8 @@
+[Unit]
+Description=Keep llama-server model loaded and completion-ready
+Wants=llama-server.service
+After=llama-server.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/dev/llm-host/scripts/keep-warm.sh

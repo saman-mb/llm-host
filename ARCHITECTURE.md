@@ -157,6 +157,34 @@ The unit calls `bin/serve`, which sources `config.sh` and runs `toolbox run -c l
 ## What this is NOT
 
 - Not Ollama (Ollama wraps llama.cpp; we use llama.cpp directly via the toolbox)
+- Not LM Studio (see below for why)
 - Not running on ROCm (we chose Vulkan for Strix Halo stability — see layer 5)
 - Not multi-GPU (single iGPU, but with 124 GB of effective VRAM via unified memory)
 - Not auth-protected (LAN trust only — fine on a home network, not for public exposure)
+
+## Why not LM Studio
+
+LM Studio is a great desktop app — model browser, chat UI, one-click HF downloads,
+OpenAI-compatible local server. It also uses llama.cpp under the hood, so for a
+laptop/desktop user it covers most needs. For *this* machine (headless server
+feeding NAS agent + OpenCode + iPhone Enchanted over Tailscale) it's a downgrade:
+
+| Capability here | LM Studio |
+|---|---|
+| Headless boot via systemd `--user` + `linger=on`, no login needed | Electron GUI app; `lms server` headless mode still wants a user session |
+| Strix Halo `gfx1151` via kyuz0 Vulkan-RADV toolbox (host stays vanilla) | Ships bundled runtimes; ROCm on `gfx1151` is the exact thing we avoid |
+| Hand-tuned flags chosen to dodge a llama.cpp prompt-cache abort path on this build: `--cache-ram 0 --no-cache-idle-slots --ctx-checkpoints 0 --checkpoint-every-n-tokens -1 --no-mmap --reasoning-budget 2048` | Curated subset in the UI; these specific flags are not exposed |
+| Container isolation of bleeding-edge llama.cpp from host | Runs on host |
+| `llm-host-control` Express API + GNOME extension + keep-warm timer | None — would need to rebuild |
+| `config.sh` in git, reproducible across reinstalls | `~/.lmstudio` JSON, not designed for git workflows |
+| Open source stack, no telemetry | Closed source, telemetry, free for personal use only |
+
+What LM Studio would add: model discovery GUI, multi-conversation chat history,
+per-model presets, built-in RAG/embeddings scaffolding. The discovery GUI is the
+only one that's actually missing here — and `scripts/download-model.sh <repo>
+<file>` covers it in one command.
+
+**Best-of-both option:** install LM Studio (x86_64 — not the arm64 AppImage that
+landed in `~/Downloads` by mistake) purely as a *client* and point it at
+`http://127.0.0.1:8080/v1`. Get the chat UI on top of this server. Don't use it
+*as* the server on this hardware.

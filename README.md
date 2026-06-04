@@ -34,6 +34,7 @@ NAS (agent client) ──HTTP──> Framework Desktop : 8080
 scripts/status.sh           # is it running, what model, what endpoint
 scripts/logs.sh             # tail logs
 scripts/restart.sh          # after editing config.sh
+scripts/wait-ready.sh       # wait until /v1/chat/completions succeeds
 scripts/test-api.sh         # smoke test the /v1/chat/completions endpoint
 scripts/benchmark.sh        # measure pp + tg tok/s
 ```
@@ -84,6 +85,12 @@ All knobs live in `config.sh`:
 | `CONTEXT` | Context window per slot |
 | `N_PARALLEL` | Concurrent request slots (each gets `CONTEXT` tokens) |
 | `EXTRA_FLAGS` | Pass-through to `llama-server` |
+
+The default config is stability-first for agent use: one large slot, a longer
+server timeout, and llama.cpp's prompt-cache/checkpoint path disabled. On this
+host, parallel long generations previously hit a llama.cpp abort in that path,
+which forced systemd to restart the server and made clients see
+`HTTP 503: Loading model` during the reload.
 
 ## First-time setup
 

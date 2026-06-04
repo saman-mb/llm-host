@@ -1,5 +1,65 @@
+import { useState } from 'react';
 import data from '../data/repo';
 import CopyButton from './CopyButton';
+
+function ScriptRunner({ scriptKey }) {
+  const [state, setState] = useState('idle'); // idle | running | done | error
+  const [output, setOutput] = useState('');
+
+  const run = async () => {
+    setState('running');
+    setOutput('');
+    try {
+      const res = await fetch(`/api/script/${scriptKey}`, { method: 'POST' });
+      const data = await res.json();
+      setOutput(data.output || data.error || '(no output)');
+      setState(data.success ? 'done' : 'error');
+    } catch {
+      setOutput('Unable to reach the control server (is llm-host-control running on :3001?).');
+      setState('error');
+    }
+  };
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={run}
+        disabled={state === 'running'}
+        className={`
+          inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
+          transition-all duration-200
+          ${state === 'running'
+            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow'}
+        `}
+      >
+        {state === 'running' ? (
+          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        ) : (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        )}
+        {state === 'running' ? 'Running…' : 'Run'}
+      </button>
+
+      {output && (
+        <pre
+          className={`
+            mt-2 p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all overflow-x-auto max-h-72 overflow-y-auto
+            ${state === 'error' ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-slate-900 text-slate-100'}
+          `}
+        >
+          {output}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 export default function Scripts() {
   const icons = {
@@ -15,7 +75,7 @@ export default function Scripts() {
     <section id="scripts" className="py-20 px-4 md:px-8 lg:px-16 bg-slate-50">
       <div className="max-w-4xl mx-auto">
         <h2 className="text-2xl md:text-3xl font-bold mb-2 tracking-tight text-slate-900">Scripts</h2>
-        <p className="text-slate-600 mb-10 text-base">CLI tools for daily operations</p>
+        <p className="text-slate-600 mb-10 text-base">CLI tools for daily operations — runnable ones can be triggered right here</p>
 
         <div className="space-y-3">
           {data.scripts.map((script, i) => (
@@ -48,6 +108,7 @@ export default function Scripts() {
                       </div>
                     </div>
                   </div>
+                  {script.run && <ScriptRunner scriptKey={script.run} />}
                 </div>
               </div>
             </div>
