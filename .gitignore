@@ -2,3 +2,5 @@
 *.gguf
 *.swp
 .DS_Store
+.docker-config/
+package-lock.json
