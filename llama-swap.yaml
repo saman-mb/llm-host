@@ -28,3 +28,24 @@ models:
     cmd: ${llama} -m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf
     cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003\.gguf"'
 
+  nomic-embed-text:
+    cmd: toolbox run -c llama-vulkan-radv llama-server --host 127.0.0.1 --port ${PORT} -m /home/saman/models/nomic-embed-text/nomic-embed-text-v1.5.Q8_0.gguf --embedding -c 8192 -ngl 999
+    cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/nomic-embed-text/nomic-embed-text-v1\.5\.Q8_0\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/nomic-embed-text/nomic-embed-text-v1\.5\.Q8_0\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/nomic-embed-text/nomic-embed-text-v1\.5\.Q8_0\.gguf"'
+
+groups:
+  chat:
+    swap: true
+    exclusive: true
+    members:
+      - qwen3.6-35b-a3b-ud
+      - qwen3.6-27b
+      - gemma-4-26b
+      - gpt-oss-120b
+
+  embeddings:
+    swap: false
+    exclusive: false
+    persistent: true
+    members:
+      - nomic-embed-text
+
