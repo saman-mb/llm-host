@@ -59,7 +59,8 @@ function cleanModelName(name) {
 const SCRIPTS_DIR = join(__dirname, '..', '..', 'scripts');
 
 // Read the model registry + active selection from config.sh via models.sh.
-// Returns { active, models: [{ key, file, exists }] } or null on failure.
+// Returns { active, models: [{ key, file, exists }], embeds: [{ key, exists }] }
+// or null on failure.
 function readRegistry() {
   try {
     const out = execSync(`bash ${join(SCRIPTS_DIR, 'models.sh')}`, {
@@ -67,7 +68,42 @@ function readRegistry() {
       timeout: 5000,
       maxBuffer: 1024 * 64,
     });
-    return JSON.parse(out);
+    const reg = JSON.parse(out);
+
+    // Parse EMBED_MODELS directly from config.sh (one "key|path" per line).
+    // We source config.sh in bash and printf each array element — safe, no user input.
+    let embeds = [];
+    try {
+      const configPath = join(SCRIPTS_DIR, '..', 'config.sh');
+      const raw = execSync(
+        `bash -c 'source ${configPath}; printf "%s\\n" "\${EMBED_MODELS[@]:-}"'`,
+        { encoding: 'utf-8', timeout: 3000, maxBuffer: 1024 * 16 },
+      );
+      embeds = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const sep = line.indexOf('|');
+          if (sep === -1) return null;
+          const key = line.slice(0, sep);
+          const filePath = line.slice(sep + 1);
+          let exists = false;
+          try {
+            execFileSync('test', ['-f', filePath]);
+            exists = true;
+          } catch {
+            exists = false;
+          }
+          return { key, exists };
+        })
+        .filter(Boolean);
+    } catch {
+      embeds = [];
+    }
+
+    reg.embeds = embeds;
+    return reg;
   } catch {
     return null;
   }

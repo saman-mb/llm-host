@@ -9,7 +9,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$REPO/config.sh}"
 OUTPUT="${1:-$REPO/llama-swap.yaml}"
 
-# Source config — gives us MODELS, CONTEXT, N_PARALLEL, EXTRA_FLAGS, MODEL_CONTEXT, TOOLBOX.
+# Source config — gives us MODELS, CONTEXT, N_PARALLEL, EXTRA_FLAGS,
+# MODEL_CONTEXT, TOOLBOX, and optionally EMBED_MODELS.
 # shellcheck source=../config.sh
 source "$CONFIG_FILE"
 
@@ -18,6 +19,9 @@ if [[ ${#MODELS[@]} -eq 0 ]]; then
   printf 'gen-swap-config: MODELS is empty in %s — nothing to generate\n' "$CONFIG_FILE" >&2
   exit 1
 fi
+
+# Default EMBED_MODELS to empty if not defined in config.
+EMBED_MODELS=("${EMBED_MODELS[@]:-}")
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -82,6 +86,56 @@ FLAGS_STR="${EXTRA_FLAGS[*]}"
     printf '    cmdStop: %s\n' "$cmd_stop"
     printf '\n'
   done
+
+  # Embed models — always-on, never swapped with chat models.
+  # Each entry in EMBED_MODELS is "key|/path/to/model.gguf".
+  for entry in "${EMBED_MODELS[@]:-}"; do
+    [[ -z "$entry" ]] && continue
+    key="${entry%%|*}"
+    path="${entry#*|}"
+    cmd_stop="$(make_cmd_stop "$path")"
+
+    printf '  %s:\n' "$key"
+    # Embed servers: fixed 8192 context, --embedding flag, GPU offload.
+    # Deliberately omit chat-only flags (--jinja, --reasoning*).
+    printf '    cmd: toolbox run -c %s llama-server --host 127.0.0.1 --port ${PORT} -m %s --embedding -c 8192 -ngl 999\n' \
+      "$TOOLBOX" "$path"
+    printf '    cmdStop: %s\n' "$cmd_stop"
+    printf '\n'
+  done
+
+  # Emit groups block only when embed models are present.
+  has_embeds=false
+  for entry in "${EMBED_MODELS[@]:-}"; do
+    [[ -n "$entry" ]] && has_embeds=true && break
+  done
+
+  if [[ "$has_embeds" == "true" ]]; then
+    printf 'groups:\n'
+    # chat group: all MODELS, swap on demand, exclusive (only one chat model loaded at a time).
+    printf '  chat:\n'
+    printf '    swap: true\n'
+    printf '    exclusive: true\n'
+    printf '    members:\n'
+    for entry in "${MODELS[@]}"; do
+      key="${entry%%|*}"
+      printf '      - %s\n' "$key"
+    done
+    printf '\n'
+    # embeddings group: always-on, non-exclusive, persistent.
+    printf '  embeddings:\n'
+    printf '    swap: false\n'
+    printf '    exclusive: false\n'
+    printf '    persistent: true\n'
+    printf '    members:\n'
+    for entry in "${EMBED_MODELS[@]:-}"; do
+      [[ -z "$entry" ]] && continue
+      key="${entry%%|*}"
+      printf '      - %s\n' "$key"
+    done
+    printf '\n'
+  fi
+
 } > "$OUTPUT"
 
 echo "Written: $OUTPUT"

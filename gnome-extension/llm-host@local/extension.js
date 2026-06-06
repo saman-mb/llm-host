@@ -77,6 +77,11 @@ class LLMHostIndicator extends PanelMenu.Button {
         this._activeModelKey = null;
         this._refreshModels();
 
+        // Embeddings — always-on models; click to warm-load via a 1-token probe.
+        this._embedMenu = new PopupMenu.PopupSubMenuMenuItem('Embeddings');
+        this.menu.addMenuItem(this._embedMenu);
+        this._refreshEmbeds();
+
         // GPU mode — Qwen and ComfyUI share one iGPU; hand it to one or the other.
         const gpuMenu = new PopupMenu.PopupSubMenuMenuItem('GPU mode');
         const llmModeItem = new PopupMenu.PopupMenuItem('LLM mode (Qwen)');
@@ -120,6 +125,7 @@ class LLMHostIndicator extends PanelMenu.Button {
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, POLL_SECONDS, () => {
             this._refresh();
             this._refreshModels();
+            this._refreshEmbeds();
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -248,6 +254,79 @@ class LLMHostIndicator extends PanelMenu.Button {
         // Reflect the new selection + loading state once systemd settles.
         GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { this._refresh(); this._refreshModels(); return GLib.SOURCE_REMOVE; });
         GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 6, () => { this._refresh(); this._refreshModels(); return GLib.SOURCE_REMOVE; });
+    }
+
+    // Populate the Embeddings submenu from /api/models embeds[], with live dot
+    // from /running (llama-swap reports which models are currently loaded).
+    _refreshEmbeds() {
+        // Fetch /api/models to get embed list, then /running for load status.
+        let proc;
+        try {
+            proc = Gio.Subprocess.new(
+                ['curl', '-s', '--max-time', '2', `${CONTROL_URL}/api/models`],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+            );
+        } catch (e) {
+            return;
+        }
+        proc.communicate_utf8_async(null, null, (p, res) => {
+            let stdout = '';
+            try { [, stdout] = p.communicate_utf8_finish(res); } catch (e) { return; }
+            let data;
+            try { data = JSON.parse(stdout); } catch (e) { return; }
+            const embeds = Array.isArray(data.embeds) ? data.embeds : [];
+            if (embeds.length === 0) return;
+
+            // Fetch /running to check which models llama-swap has warm.
+            let proc2;
+            try {
+                proc2 = Gio.Subprocess.new(
+                    ['curl', '-s', '--max-time', '2', `${SERVER_URL}/running`],
+                    Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+                );
+            } catch (e) {
+                this._buildEmbedMenu(embeds, []);
+                return;
+            }
+            proc2.communicate_utf8_async(null, null, (p2, res2) => {
+                let running = [];
+                let raw2 = '';
+                try { [, raw2] = p2.communicate_utf8_finish(res2); } catch (e) {}
+                try { running = JSON.parse(raw2) || []; } catch (e) {}
+                this._buildEmbedMenu(embeds, running);
+            });
+        });
+    }
+
+    _buildEmbedMenu(embeds, running) {
+        this._embedMenu.menu.removeAll();
+        for (const em of embeds) {
+            const loaded = Array.isArray(running) && running.includes(em.key);
+            const mark = loaded ? ' ●' : '';
+            const label = em.exists ? `${em.key}${mark}` : `${em.key} (missing)`;
+            const item = new PopupMenu.PopupMenuItem(label);
+            if (em.exists) {
+                item.connect('activate', () => this._loadEmbed(em.key));
+            } else {
+                item.setSensitive(false);
+            }
+            this._embedMenu.menu.addMenuItem(item);
+        }
+    }
+
+    // Warm-load an embed model by sending a 1-token embeddings request.
+    _loadEmbed(key) {
+        try {
+            Gio.Subprocess.new(
+                ['curl', '-s', '-X', 'POST', `${SERVER_URL}/v1/embeddings`,
+                 '-H', 'Content-Type: application/json',
+                 '-d', `{"model":"${key}","input":"."}`],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
+            );
+        } catch (e) {
+            // ignore
+        }
+        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => { this._refreshEmbeds(); return GLib.SOURCE_REMOVE; });
     }
 
     _refreshModel() {

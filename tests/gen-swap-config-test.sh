@@ -270,6 +270,119 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# T17-T24: Embeddings / llama-swap groups feature
+# ---------------------------------------------------------------------------
+
+EMBED_CONFIG="$(mktemp /tmp/config-embed-XXXXXX.sh)"
+EMBED_OUT="$(mktemp /tmp/llama-swap-embed-XXXXXX.yaml)"
+cat > "$EMBED_CONFIG" <<'CFGEOF'
+#!/usr/bin/env bash
+TOOLBOX="llama-vulkan-radv"
+MODELS=(
+  "qwen3.6-35b-a3b-ud|/home/saman/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q6_K.gguf"
+  "qwen3.6-27b|/home/saman/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
+)
+EMBED_MODELS=(
+  "nomic-embed-text|/home/saman/models/nomic-embed-text/nomic-embed-text-v1.5.Q8_0.gguf"
+)
+HOST="0.0.0.0"
+PORT="8080"
+CONTEXT="262144"
+N_PARALLEL="1"
+EXTRA_FLAGS=(-ngl 999 -fa 1 --no-mmap --jinja --reasoning auto)
+declare -A MODEL_CONTEXT=()
+CFGEOF
+trap 'rm -f "$BASELINE_CONFIG" "$EMBED_CONFIG" "$EMBED_OUT" "$OUT"' EXIT
+
+CONFIG_FILE="$EMBED_CONFIG" \
+  bash /home/saman/dev/llm-host/.claude/worktrees/agent-a411b92ac7a6289ec/scripts/gen-swap-config.sh "$EMBED_OUT"
+
+# --- T17: groups.chat block present with swap: true and exclusive: true ------
+if grep -qE '^\s*chat:' "$EMBED_OUT" && grep -A5 'chat:' "$EMBED_OUT" | grep -q 'swap: true' && grep -A5 'chat:' "$EMBED_OUT" | grep -q 'exclusive: true'; then
+  ok "T17: groups.chat has swap: true and exclusive: true"
+else
+  fail "T17: groups.chat missing or lacks swap/exclusive flags"
+fi
+
+# --- T18: groups.chat members contains all MODELS keys ----------------------
+if grep -A20 'chat:' "$EMBED_OUT" | grep -q 'qwen3.6-35b-a3b-ud' && grep -A20 'chat:' "$EMBED_OUT" | grep -q 'qwen3.6-27b'; then
+  ok "T18: groups.chat members includes all MODELS keys"
+else
+  fail "T18: groups.chat members missing model keys"
+fi
+
+# --- T19: groups.embeddings block: swap false, exclusive false, persistent true --
+if grep -qE '^\s*embeddings:' "$EMBED_OUT" \
+   && grep -A8 'embeddings:' "$EMBED_OUT" | grep -q 'swap: false' \
+   && grep -A8 'embeddings:' "$EMBED_OUT" | grep -q 'exclusive: false' \
+   && grep -A8 'embeddings:' "$EMBED_OUT" | grep -q 'persistent: true'; then
+  ok "T19: groups.embeddings has swap: false, exclusive: false, persistent: true"
+else
+  fail "T19: groups.embeddings block missing or has wrong flags"
+fi
+
+# --- T20: groups.embeddings members contains nomic-embed-text ---------------
+if grep -A10 'embeddings:' "$EMBED_OUT" | grep -q 'nomic-embed-text'; then
+  ok "T20: groups.embeddings members includes nomic-embed-text"
+else
+  fail "T20: groups.embeddings missing nomic-embed-text member"
+fi
+
+# --- T21: embed model cmd has --embedding and -c 8192 and -ngl 999 ----------
+if grep -A3 'nomic-embed-text:' "$EMBED_OUT" | grep -q -- '--embedding' \
+   && grep -A3 'nomic-embed-text:' "$EMBED_OUT" | grep -q -- '-c 8192' \
+   && grep -A3 'nomic-embed-text:' "$EMBED_OUT" | grep -q -- '-ngl 999'; then
+  ok "T21: embed cmd has --embedding, -c 8192, -ngl 999"
+else
+  fail "T21: embed cmd missing --embedding or -c 8192 or -ngl 999"
+fi
+
+# --- T22: embed model cmd does NOT have chat macro flags (--jinja / --reasoning) --
+EMBED_CMD_LINE="$(grep -A3 'nomic-embed-text:' "$EMBED_OUT" | grep 'cmd:' || true)"
+if echo "$EMBED_CMD_LINE" | grep -qE -- '--jinja|--reasoning'; then
+  fail "T22: embed cmd should NOT contain --jinja or --reasoning flags"
+else
+  ok "T22: embed cmd correctly omits --jinja and --reasoning"
+fi
+
+# --- T23: embed model cmdStop is anchored (has -m path pattern, pkill -TERM) -
+if grep -A4 'nomic-embed-text:' "$EMBED_OUT" | grep 'cmdStop:' | grep -q 'pkill -TERM' \
+   && grep -A4 'nomic-embed-text:' "$EMBED_OUT" | grep 'cmdStop:' | grep -q 'nomic-embed-text'; then
+  ok "T23: embed cmdStop is anchored with pkill -TERM and model path"
+else
+  fail "T23: embed cmdStop missing pkill -TERM or model path anchor"
+fi
+
+# --- T24: empty EMBED_MODELS → no groups section (backward compat) ----------
+NO_EMBED_CONFIG="$(mktemp /tmp/config-noembed-XXXXXX.sh)"
+NO_EMBED_OUT="$(mktemp /tmp/llama-swap-noembed-XXXXXX.yaml)"
+cat > "$NO_EMBED_CONFIG" <<'CFGEOF'
+#!/usr/bin/env bash
+TOOLBOX="llama-vulkan-radv"
+MODELS=(
+  "qwen3.6-35b-a3b-ud|/home/saman/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q6_K.gguf"
+)
+HOST="0.0.0.0"
+PORT="8080"
+CONTEXT="262144"
+N_PARALLEL="1"
+EXTRA_FLAGS=(-ngl 999)
+declare -A MODEL_CONTEXT=()
+CFGEOF
+
+CONFIG_FILE="$NO_EMBED_CONFIG" \
+  bash /home/saman/dev/llm-host/.claude/worktrees/agent-a411b92ac7a6289ec/scripts/gen-swap-config.sh "$NO_EMBED_OUT"
+
+if grep -q 'groups:' "$NO_EMBED_OUT"; then
+  fail "T24: no EMBED_MODELS should produce no groups section (backward compat)"
+else
+  ok "T24: empty EMBED_MODELS → no groups section emitted"
+fi
+rm -f "$NO_EMBED_CONFIG" "$NO_EMBED_OUT"
+
+rm -f "$EMBED_CONFIG" "$EMBED_OUT"
+
 # --- Summary ----------------------------------------------------------------
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
