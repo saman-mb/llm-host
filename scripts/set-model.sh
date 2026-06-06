@@ -28,7 +28,10 @@ mkdir -p "$(dirname "$MODEL_STATE_FILE")"
 printf '%s\n' "$key" > "$MODEL_STATE_FILE"
 echo "Active model set to '$key'."
 
-# Restart (and ensure enabled, so a stopped server comes back up on the new model).
-systemctl --user enable --now llama-server.service >/dev/null 2>&1 || true
-systemctl --user restart llama-server.service
-echo "llama-server restarting on '$key' — it will accept requests once the model finishes loading."
+# llama-swap loads models on demand — fire a 1-token request naming the key so
+# the swap starts now instead of when the first real request arrives.
+systemctl --user enable --now llama-swap.service >/dev/null 2>&1 || true
+curl -s --max-time 900 -o /dev/null "http://localhost:$PORT/v1/completions" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$key\",\"prompt\":\"x\",\"max_tokens\":1}" &
+echo "llama-swap loading '$key' — it will accept requests once the model finishes loading."

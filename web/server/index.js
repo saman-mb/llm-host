@@ -8,7 +8,7 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = 3001;
-const LLAMA_SERVICE = 'llama-server.service';
+const LLAMA_SERVICE = 'llama-swap.service';
 const KEEPWARM_SERVICE = 'llm-host-keepwarm.service';
 const KEEPWARM_TIMER = 'llm-host-keepwarm.timer';
 

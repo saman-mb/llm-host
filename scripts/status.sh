@@ -8,8 +8,8 @@ source "$REPO/config.sh"
 LAN_IP="$(ip -4 addr show | awk '/inet / && $2 !~ /^127\./ && $2 !~ /^172\.17\./ {print $2; exit}' | cut -d/ -f1)"
 
 echo "==> systemd"
-systemctl --user is-active llama-server.service
-systemctl --user status llama-server.service --no-pager 2>&1 | sed -n '1,5p;/Main PID/p;/Active/p' | sort -u
+systemctl --user is-active llama-swap.service
+systemctl --user status llama-swap.service --no-pager 2>&1 | sed -n '1,5p;/Main PID/p;/Active/p' | sort -u
 
 echo
 echo "==> listening"

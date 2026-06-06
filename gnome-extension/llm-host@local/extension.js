@@ -8,7 +8,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const UNIT = 'llama-server';
+const UNIT = 'llama-swap';
 const KEEPWARM_SERVICE = 'llm-host-keepwarm.service';
 const KEEPWARM_TIMER = 'llm-host-keepwarm.timer';
 const POLL_SECONDS = 10;
@@ -68,6 +68,7 @@ class LLMHostIndicator extends PanelMenu.Button {
             scriptsMenu.menu.addMenuItem(item);
         };
         addScript('Sync model → Hermes/OpenCode', 'sync-model.sh');
+        addScript('Sync model list → OpenCode', 'sync-opencode-models.sh');
         addScript('Benchmark', 'benchmark.sh');
         addScript('Test API', 'test-api.sh');
         addScript('Status', 'status.sh');

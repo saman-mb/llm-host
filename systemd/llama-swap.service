@@ -1,0 +1,19 @@
+# llama-swap — model-swapping proxy in front of llama-server (Vulkan toolbox).
+# Replaces llama-server.service as the thing listening on :8080.
+#
+# Install:
+#   ln -sf ~/dev/llm-host/systemd/llama-swap.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user disable --now llama-server.service llm-host-keepwarm.timer
+#   systemctl --user enable --now llama-swap.service
+[Unit]
+Description=llama-swap (model proxy for llama.cpp on Strix Halo)
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/llama-swap --config %h/dev/llm-host/llama-swap.yaml --listen :8080
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

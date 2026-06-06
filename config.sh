@@ -9,11 +9,10 @@ TOOLBOX="llama-vulkan-radv"
 # or the GNOME taskbar (both write the chosen key to MODEL_STATE_FILE), or run
 # `scripts/set-model.sh <key>`.
 MODELS=(
-  "qwen3-next-80b|$HOME/models/qwen3-next-80b-a3b-instruct/Qwen3-Next-80B-A3B-Instruct-Q5_K_M.gguf"
   "gemma-4-26b|$HOME/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf"
-  "qwen3.6-35b-a3b|$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q6_K.gguf"
   "qwen3.6-35b-a3b-ud|$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q6_K.gguf"
   "qwen3.6-27b|$HOME/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
+  "gpt-oss-120b|$HOME/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf"
 )
 
 # Where the active model key is persisted between restarts.

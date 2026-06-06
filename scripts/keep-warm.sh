@@ -10,9 +10,9 @@ if ! systemctl --user is-enabled --quiet llm-host-keepwarm.timer; then
   exit 0
 fi
 
-if ! systemctl --user is-active --quiet llama-server.service; then
-  echo "llama-server.service is not active; starting it."
-  systemctl --user start llama-server.service
+if ! systemctl --user is-active --quiet llama-swap.service; then
+  echo "llama-swap.service is not active; starting it."
+  systemctl --user start llama-swap.service
 fi
 
 "$REPO/scripts/wait-ready.sh" "${LLM_HOST_KEEP_WARM_TIMEOUT:-300}"
