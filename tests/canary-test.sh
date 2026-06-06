@@ -124,6 +124,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# T11: canary_validate function is defined and sourceable
+# ---------------------------------------------------------------------------
+if grep -qE '^canary_validate\(\)' "$CANARY"; then
+  ok "T11: canary_validate() function defined in canary.sh"
+else
+  fail "T11: canary_validate() function not found in canary.sh"
+fi
+
+# ---------------------------------------------------------------------------
+# T12: source guard prevents main body from running when sourced
+# ---------------------------------------------------------------------------
+if grep -qE 'BASH_SOURCE\[0\].*!=.*\$0|BASH_SOURCE.*!=.*0' "$CANARY"; then
+  ok "T12: source guard (BASH_SOURCE[0] != \$0) present"
+else
+  fail "T12: source guard missing — sourcing canary.sh would run main body"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

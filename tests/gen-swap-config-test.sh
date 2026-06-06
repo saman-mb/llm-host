@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$REPO/scripts/gen-swap-config.sh"
+CANARY="$REPO/scripts/canary.sh"
 OUT="$(mktemp /tmp/llama-swap-test-XXXXXX.yaml)"
 PASS=0; FAIL=0
 
@@ -162,8 +163,6 @@ rm -f "$EMPTY_CONFIG" "$EMPTY_OUT"
 
 # ---------------------------------------------------------------------------
 # T13: Path with spaces — cmdStop keeps '-m "..."' as a single quoted argument
-# The escaped pattern must be wrapped in quotes so pkill receives it as one
-# argument, not split on the space inside the path.
 # ---------------------------------------------------------------------------
 SPACES_CONFIG="$(mktemp /tmp/config-spaces-XXXXXX.sh)"
 SPACES_OUT="$(mktemp /tmp/llama-swap-spaces-XXXXXX.yaml)"
@@ -182,8 +181,6 @@ declare -A MODEL_CONTEXT=()
 CFGEOF
 
 CONFIG_FILE="$SPACES_CONFIG" "$SCRIPT" "$SPACES_OUT" 2>/dev/null
-# The path contains a space. cmdStop must emit the pkill pattern with the
-# full "-m <path>" wrapped in double-quotes so it arrives as one argument.
 if grep -qF '"-m /home/saman/models/my model dir/the model\.gguf"' "$SPACES_OUT"; then
   ok "T13: path-with-spaces: '-m ...' is one quoted pkill argument"
 else
@@ -193,16 +190,13 @@ rm -f "$SPACES_CONFIG" "$SPACES_OUT"
 
 # ---------------------------------------------------------------------------
 # T14: Substring paths — escaped pattern of shorter must NOT match longer cmdline
-# No real pkill is invoked; we simulate cmdline strings with grep -F.
 # ---------------------------------------------------------------------------
 SHORT_PATH="/home/saman/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
 LONG_PATH="/home/saman/models/qwen3.6-27b/Qwen3.6-27B-Q8_0-extended.gguf"
 
-# Escape dots the same way gen-swap-config.sh does (only dots → \.).
 esc_short="$(printf '%s' "$SHORT_PATH" | sed 's/\./\\./g')"
 pkill_pat='"-m '"$esc_short"'"'
 
-# A simulated cmdline for the LONG model — must NOT match the short pattern.
 long_cmdline="llama-server --host 127.0.0.1 -m ${LONG_PATH} -ngl 999"
 if ! echo "$long_cmdline" | grep -qF -- "$pkill_pat"; then
   ok "T14: short escaped pattern does not substring-match longer cmdline (no false positive)"
@@ -210,7 +204,6 @@ else
   fail "T14: short escaped pattern falsely matches longer cmdline"
 fi
 
-# And it DOES correctly match the exact short-model cmdline.
 short_cmdline="llama-server --host 127.0.0.1 ${pkill_pat} -ngl 999"
 if echo "$short_cmdline" | grep -qF -- "$pkill_pat"; then
   ok "T14: short escaped pattern correctly matches its own exact cmdline"
@@ -220,29 +213,61 @@ fi
 
 # ---------------------------------------------------------------------------
 # T15: Canary — empty curl response must reach the _fail branch
-# Inline the canary completion-check logic using a mock empty RESPONSE.
+# Sources canary_validate() from scripts/canary.sh instead of inlining logic.
 # ---------------------------------------------------------------------------
-RESPONSE=""
-CANARY_FAIL=0
-if [[ -z "$RESPONSE" ]]; then
-  CANARY_FAIL=1
-fi
-if [[ "$CANARY_FAIL" -eq 1 ]]; then
-  ok "T15: empty curl response reaches _fail branch"
+
+# Source canary.sh in a sub-shell to isolate the side-effects-free function.
+# The source guard ensures the main body does not run.
+if [[ ! -f "$CANARY" ]]; then
+  fail "T15: canary.sh not found at $CANARY"
 else
-  fail "T15: empty curl response did not reach _fail branch"
+  # We need _log and _notify stubs so sourcing does not fail in CI.
+  # Redefine them after sourcing by using a wrapper sub-shell.
+  CANARY_FAIL_STATUS=0
+  (
+    # Stub helpers that canary.sh defines before we re-define them.
+    source "$CANARY"
+    # Override _fail so it sets exit code without calling logger/notify.
+    _fail() { exit 1; }
+    _log()    { :; }
+    _notify() { :; }
+    canary_validate "" || exit 1
+  ) && CANARY_FAIL_STATUS=0 || CANARY_FAIL_STATUS=1
+
+  if [[ "$CANARY_FAIL_STATUS" -eq 1 ]]; then
+    ok "T15: empty curl response reaches _fail branch (via canary_validate)"
+  else
+    fail "T15: empty curl response did not reach _fail branch"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 # T16: Canary — non-printable bytes in content must reach the _fail branch
-# Inline the canary printable-check logic with an actual control character.
+# Sources canary_validate() from scripts/canary.sh instead of inlining logic.
 # ---------------------------------------------------------------------------
-CONTENT_JUNK="$(printf 'OK\x01\x02')"
-NON_PRINTABLE="$(printf '%s' "$CONTENT_JUNK" | tr -d '[:print:][:space:]' || true)"
-if [[ -n "$NON_PRINTABLE" ]]; then
-  ok "T16: non-printable content reaches _fail branch"
+
+if [[ ! -f "$CANARY" ]]; then
+  fail "T16: canary.sh not found at $CANARY"
 else
-  fail "T16: non-printable check did not detect junk bytes"
+  CANARY_FAIL_STATUS=0
+
+  # Build a mock response with non-printable content.
+  JUNK_CONTENT="$(printf 'OK\x01\x02')"
+  MOCK_RESPONSE="$(printf '{"choices":[{"message":{"content":"%s"}}]}' "$(printf '%s' "$JUNK_CONTENT" | sed 's/"/\\"/g')")"
+
+  (
+    source "$CANARY"
+    _fail() { exit 1; }
+    _log()    { :; }
+    _notify() { :; }
+    canary_validate "$MOCK_RESPONSE" || exit 1
+  ) && CANARY_FAIL_STATUS=0 || CANARY_FAIL_STATUS=1
+
+  if [[ "$CANARY_FAIL_STATUS" -eq 1 ]]; then
+    ok "T16: non-printable content reaches _fail branch (via canary_validate)"
+  else
+    fail "T16: non-printable check did not detect junk bytes"
+  fi
 fi
 
 # --- Summary ----------------------------------------------------------------

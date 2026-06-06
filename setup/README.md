@@ -9,8 +9,9 @@ sudo systemctl reboot    # ← required, kernel params + groups need it
 ./03-power.sh            # disable GNOME idle-suspend
 ./04-firewall.sh         # open port 8080
 ./05-create-toolbox.sh   # pull vulkan-radv image, create container
-./06-install-service.sh  # install + enable llama-server.service
+./06-install-service.sh  # install + enable llama-swap router service
 ./07-tailscale.sh        # optional: reach this box from anywhere via tailnet
+./08-install-keepwarm.sh # optional: keep completion endpoint warm
 ```
 
 Then download a model and verify:

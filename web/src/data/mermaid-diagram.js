@@ -13,7 +13,7 @@ flowchart TB
         end
 
         subgraph SD["systemd &#183; user session (linger=on)"]
-            SVC["<div style='text-align:left;line-height:1.6'><strong>llama-server.service</strong><br/><span style='opacity:.65;font-size:10px'>Restart=always</span></div>"]
+            SVC["<div style='text-align:left;line-height:1.6'><strong>llama-swap.service</strong><br/><span style='opacity:.65;font-size:10px'>Restart=always &#183; router</span></div>"]
         end
 
         subgraph TBX["Toolbx container &#183; podman (rootless)"]

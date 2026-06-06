@@ -69,8 +69,9 @@ fi
 
 # ---------------------------------------------------------------------------
 # T6: script uses jq -n --arg (not printf-based JSON construction)
+# Fix: use grep -F for literal string matching to avoid stray-backslash warnings.
 # ---------------------------------------------------------------------------
-if grep -qE 'jq\s+-n' "$MODELS_SH" && grep -qE '\-\-arg|\-\-argjson|\-\-args' "$MODELS_SH"; then
+if grep -qE 'jq[[:space:]]+-n' "$MODELS_SH" && grep -qF -- '--arg' "$MODELS_SH"; then
   ok "T6: models.sh uses jq -n --arg for JSON emission"
 else
   fail "T6: models.sh does not use jq -n --arg (required by spec)"
