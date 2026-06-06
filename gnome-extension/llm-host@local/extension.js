@@ -140,8 +140,8 @@ function buildItems(items, ctx, addFn) {
                 mi.connect('activate', () => {
                     dispatchAction(action);
                     // Optimistic refresh after systemctl settles
-                    ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
-                    ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
+                    ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
+                    ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
                 });
                 ctx.toggleItem = mi;
                 ctx.toggleItemSpec = item;
@@ -155,12 +155,12 @@ function buildItems(items, ctx, addFn) {
                     dispatchAction(item.action);
                     // Refresh after systemctl actions so state dot updates quickly
                     if (item.action && item.action.kind === 'systemctl') {
-                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
-                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
+                        ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
+                        ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
                     }
                     if (item.action && item.action.kind === 'http') {
-                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(2, () => ctx.refreshFn && ctx.refreshFn());
-                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(5, () => ctx.refreshFn && ctx.refreshFn());
+                        ctx.oneShot(2, () => ctx.refreshFn && ctx.refreshFn());
+                        ctx.oneShot(5, () => ctx.refreshFn && ctx.refreshFn());
                     }
                 });
                 addFn(mi);
