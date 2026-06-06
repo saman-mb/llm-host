@@ -296,7 +296,7 @@ CFGEOF
 trap 'rm -f "$BASELINE_CONFIG" "$EMBED_CONFIG" "$EMBED_OUT" "$OUT"' EXIT
 
 CONFIG_FILE="$EMBED_CONFIG" \
-  bash /home/saman/dev/llm-host/.claude/worktrees/agent-a411b92ac7a6289ec/scripts/gen-swap-config.sh "$EMBED_OUT"
+  bash $SCRIPT "$EMBED_OUT"
 
 # --- T17: groups.chat block present with swap: true and exclusive: true ------
 if grep -qE '^\s*chat:' "$EMBED_OUT" && grep -A5 'chat:' "$EMBED_OUT" | grep -q 'swap: true' && grep -A5 'chat:' "$EMBED_OUT" | grep -q 'exclusive: true'; then
@@ -339,7 +339,7 @@ else
 fi
 
 # --- T22: embed model cmd does NOT have chat macro flags (--jinja / --reasoning) --
-EMBED_CMD_LINE="$(grep -A3 'nomic-embed-text:' "$EMBED_OUT" | grep 'cmd:' || true)"
+EMBED_CMD_LINE="$(grep -A3 'nomic-embed-text:' "$EMBED_OUT" | grep -E '^\s*cmd:' || true)"
 if echo "$EMBED_CMD_LINE" | grep -qE -- '--jinja|--reasoning'; then
   fail "T22: embed cmd should NOT contain --jinja or --reasoning flags"
 else
@@ -372,7 +372,7 @@ declare -A MODEL_CONTEXT=()
 CFGEOF
 
 CONFIG_FILE="$NO_EMBED_CONFIG" \
-  bash /home/saman/dev/llm-host/.claude/worktrees/agent-a411b92ac7a6289ec/scripts/gen-swap-config.sh "$NO_EMBED_OUT"
+  bash $SCRIPT "$NO_EMBED_OUT"
 
 if grep -q 'groups:' "$NO_EMBED_OUT"; then
   fail "T24: no EMBED_MODELS should produce no groups section (backward compat)"
