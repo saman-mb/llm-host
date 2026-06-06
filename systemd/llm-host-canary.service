@@ -1,0 +1,19 @@
+[Unit]
+Description=LLM host canary health check (completion + GTT orphan)
+# Fires a cheap completion request to verify the model is responding and output
+# is not garbled. Also checks for orphaned VRAM (GTT >5 GiB with no loaded model).
+Wants=llama-swap.service
+After=llama-swap.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/dev/llm-host/scripts/canary.sh
+
+# Canary runs as the user and needs access to DBUS for desktop notifications.
+# DISPLAY and DBUS_SESSION_BUS_ADDRESS are inherited from the user session.
+
+[Install]
+# To enable:
+#   systemctl --user enable --now llm-host-canary.timer
+# (Uncomment the line below and run the above command.)
+# WantedBy=default.target

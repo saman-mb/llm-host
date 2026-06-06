@@ -9,9 +9,9 @@ TOOLBOX="llama-vulkan-radv"
 # or the GNOME taskbar (both write the chosen key to MODEL_STATE_FILE), or run
 # `scripts/set-model.sh <key>`.
 MODELS=(
-  "gemma-4-26b|$HOME/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf"
   "qwen3.6-35b-a3b-ud|$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q6_K.gguf"
   "qwen3.6-27b|$HOME/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
+  "gemma-4-26b|$HOME/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf"
   "gpt-oss-120b|$HOME/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf"
 )
 
@@ -27,7 +27,22 @@ PORT="8080"
 # timeout/cancel + prompt-cache abort path on this build.
 CONTEXT="262144"
 N_PARALLEL="1"
-EXTRA_FLAGS="-ngl 999 -fa 1 --no-mmap --jinja --reasoning auto --reasoning-format auto --reasoning-budget 2048 --timeout 3600 --cache-ram 0 --no-cache-idle-slots --ctx-checkpoints 0 --checkpoint-every-n-tokens -1"
+
+# EXTRA_FLAGS is a bash array so flags with spaces or quotes stay intact.
+EXTRA_FLAGS=(
+  -ngl 999
+  -fa 1
+  --no-mmap
+  --jinja
+  --reasoning auto
+  --reasoning-format auto
+  --reasoning-budget 2048
+  --timeout 3600
+  --cache-ram 0
+  --no-cache-idle-slots
+  --ctx-checkpoints 0
+  --checkpoint-every-n-tokens -1
+)
 
 # Per-model CONTEXT overrides (keyed by model key). Models with no entry use
 # the CONTEXT default above. (Both current models train on a 262144 window,

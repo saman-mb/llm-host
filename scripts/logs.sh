@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec tail -F ~/.local/share/llama-server.log
+exec journalctl --user -u llama-swap -f

@@ -1,7 +1,7 @@
 {
   "uuid": "llm-host@local",
   "name": "LLM Host Toggle",
-  "description": "Start/stop the local llama-server.service from the GNOME top bar. Shows a colored dot reflecting service state and provides Start/Stop + quick links from the dropdown.",
+  "description": "Start/stop the local llama-swap service from the GNOME top bar. Shows a colored dot reflecting service state and provides Start/Stop + quick links from the dropdown.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "version": 1,
   "url": "https://github.com/saman-mb/llm-host"

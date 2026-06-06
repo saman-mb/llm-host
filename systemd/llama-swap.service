@@ -1,19 +1,33 @@
-# llama-swap — model-swapping proxy in front of llama-server (Vulkan toolbox).
-# Replaces llama-server.service as the thing listening on :8080.
-#
-# Install:
-#   ln -sf ~/dev/llm-host/systemd/llama-swap.service ~/.config/systemd/user/
-#   systemctl --user daemon-reload
-#   systemctl --user disable --now llama-server.service llm-host-keepwarm.timer
-#   systemctl --user enable --now llama-swap.service
 [Unit]
-Description=llama-swap (model proxy for llama.cpp on Strix Halo)
-After=network.target
+Description=llama-swap — on-demand model router (Vulkan toolbox on Strix Halo)
+# On-demand model router for multi-model setups. llama-swap listens on
+# :8080 and spawns llama-server inside the toolbox on demand, swapping models
+# when the requested model id changes.
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=%h/.local/bin/llama-swap --config %h/dev/llm-host/llama-swap.yaml --listen :8080
-Restart=on-failure
-RestartSec=3
+Type=simple
+ExecStart=%h/.local/bin/llama-swap --config %h/dev/llm-host/llama-swap.yaml
+Restart=always
+RestartSec=10
+
+# --- OOM & memory guardrails (W4) ---
+# Push llama-swap (and its llama-server children) to front of OOM kill queue.
+OOMScoreAdjust=200
+# Soft memory ceiling — systemd signals the cgroup to reclaim before hard kill.
+MemoryHigh=120G
+
+# --- Logging ---
+# Logs go to journald. Cap total journal usage with:
+#   systemd/journald.conf.d-llm-host.conf  →  /etc/systemd/journald.conf.d/llm-host.conf
+#   (SystemMaxUse=500M — see that file for install instructions)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llama-swap
 
 [Install]
+# To enable:
+#   systemctl --user enable --now llama-swap.service
+# (Uncomment the line below and run the above command.)
 WantedBy=default.target

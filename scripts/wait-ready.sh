@@ -43,5 +43,5 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 done
 
 echo "Model did not become completion-ready within ${TIMEOUT_SECONDS}s." >&2
-echo "Check logs: tail ~/.local/share/llama-server.log" >&2
+echo "Check logs: journalctl --user -u llama-swap -f" >&2
 exit 1

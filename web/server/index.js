@@ -1,5 +1,5 @@
 import express from 'express';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -9,8 +9,7 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = 3001;
 const LLAMA_SERVICE = 'llama-swap.service';
-const KEEPWARM_SERVICE = 'llm-host-keepwarm.service';
-const KEEPWARM_TIMER = 'llm-host-keepwarm.timer';
+const LLAMA_PORT = 8080;
 
 // Trust the proxy (Vite dev proxy forwards headers)
 app.set('trust proxy', 1);
@@ -29,7 +28,7 @@ function systemctl(args) {
 
 function checkLlamaStatus() {
   try {
-    const output = execSync('systemctl --user status llama-server', {
+    const output = execSync(`systemctl --user status ${LLAMA_SERVICE}`, {
       encoding: 'utf-8',
       maxBuffer: 1024 * 512,
     });
@@ -88,7 +87,7 @@ async function getModelName() {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1500);
-    const res = await fetch('http://localhost:8080/v1/models', { signal: ctrl.signal });
+    const res = await fetch(`http://localhost:${LLAMA_PORT}/v1/models`, { signal: ctrl.signal });
     clearTimeout(timer);
     if (res.ok) {
       const j = await res.json();
@@ -107,13 +106,10 @@ async function getModelName() {
 const COMFYUI_URL = 'http://127.0.0.1:8188';
 
 function stopLlama() {
-  systemctl(`disable --now ${KEEPWARM_TIMER}`);
-  systemctl(`stop ${KEEPWARM_SERVICE}`);
   systemctl(`disable --now ${LLAMA_SERVICE}`);
 }
 
 function startLlama() {
-  systemctl(`enable --now ${KEEPWARM_TIMER}`);
   systemctl(`enable --now ${LLAMA_SERVICE}`);
 }
 
@@ -179,13 +175,13 @@ app.post('/api/stop', (_req, res) => {
     if (!status.running) {
       return res.json({
         success: true,
-        message: 'llama-server is already stopped and disabled; keep-warm disabled',
+        message: 'llama-swap is already stopped and disabled',
       });
     }
 
     res.json({
       success: true,
-      message: 'llama-server stopped and disabled; keep-warm disabled',
+      message: 'llama-swap stopped and disabled',
     });
   } catch (err) {
     res.status(500).json({
@@ -203,8 +199,8 @@ app.post('/api/start', (_req, res) => {
     res.json({
       success: true,
       message: already
-        ? 'llama-server is already running; keep-warm enabled'
-        : 'llama-server enabled and starting; keep-warm enabled',
+        ? 'llama-swap is already running'
+        : 'llama-swap enabled and starting',
     });
   } catch (err) {
     res.status(500).json({
@@ -262,10 +258,10 @@ app.post('/api/model', (req, res) => {
     return res.status(400).json({ success: false, error: `Unknown model: ${key}` });
   }
   try {
-    // `key` is interpolated into the command, but only after being matched
-    // against the registry above, so it can only ever be a known model key.
+    // `key` is matched against the registry above before reaching here,
+    // so it can only ever be a known model key.
     // set-model.sh validates once more, persists the choice, and restarts.
-    execSync(`bash ${join(SCRIPTS_DIR, 'set-model.sh')} ${key}`, {
+    execFileSync('bash', [join(SCRIPTS_DIR, 'set-model.sh'), key], {
       encoding: 'utf-8',
       timeout: 30000,
       maxBuffer: 1024 * 64,

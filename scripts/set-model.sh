@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Select which model llama-server loads, then restart it (non-blocking).
+# Select which model llama-swap loads, then restart it (non-blocking).
 # Usage: scripts/set-model.sh <model-key>
 # The key must exist in the MODELS registry in config.sh.
 set -euo pipefail
@@ -23,15 +23,16 @@ if [ "$valid" -ne 1 ]; then
   exit 1
 fi
 
-# Persist the selection, then restart so the runner picks it up.
+# Persist the selection, then restart so llama-swap picks it up.
 mkdir -p "$(dirname "$MODEL_STATE_FILE")"
 printf '%s\n' "$key" > "$MODEL_STATE_FILE"
 echo "Active model set to '$key'."
 
-# llama-swap loads models on demand — fire a 1-token request naming the key so
-# the swap starts now instead of when the first real request arrives.
+# llama-swap loads models on demand — fire a tiny request naming the key so the
+# swap starts now; persisting + triggering are decoupled so this never blocks.
 systemctl --user enable --now llama-swap.service >/dev/null 2>&1 || true
 curl -s --max-time 900 -o /dev/null "http://localhost:$PORT/v1/completions" \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"$key\",\"prompt\":\"x\",\"max_tokens\":1}" &
+disown
 echo "llama-swap loading '$key' — it will accept requests once the model finishes loading."

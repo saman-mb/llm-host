@@ -9,14 +9,12 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const UNIT = 'llama-swap';
-const KEEPWARM_SERVICE = 'llm-host-keepwarm.service';
-const KEEPWARM_TIMER = 'llm-host-keepwarm.timer';
 const POLL_SECONDS = 10;
 const WEB_URL = 'http://localhost:8081';
 const SERVER_URL = 'http://localhost:8080';
 const COMFYUI_URL = 'http://127.0.0.1:8188';
 const CONTROL_URL = 'http://127.0.0.1:3001';
-const SCRIPTS_DIR = '$HOME/dev/llm-host/scripts';
+const SCRIPTS_DIR = GLib.build_filenamev([GLib.get_home_dir(), 'dev', 'llm-host', 'scripts']);
 
 const Indicator = GObject.registerClass(
 class LLMHostIndicator extends PanelMenu.Button {
@@ -68,7 +66,6 @@ class LLMHostIndicator extends PanelMenu.Button {
             scriptsMenu.menu.addMenuItem(item);
         };
         addScript('Sync model → Hermes/OpenCode', 'sync-model.sh');
-        addScript('Sync model list → OpenCode', 'sync-opencode-models.sh');
         addScript('Benchmark', 'benchmark.sh');
         addScript('Test API', 'test-api.sh');
         addScript('Status', 'status.sh');
@@ -302,8 +299,6 @@ class LLMHostIndicator extends PanelMenu.Button {
 
     _control(action) {
         if (action === 'stop') {
-            this._runSystemctl(['disable', '--now', KEEPWARM_TIMER]);
-            this._runSystemctl(['stop', KEEPWARM_SERVICE]);
             this._runSystemctl(['disable', '--now', `${UNIT}.service`]);
         } else if (action === 'start') {
             this._runSystemctl(['enable', '--now', `${UNIT}.service`]);

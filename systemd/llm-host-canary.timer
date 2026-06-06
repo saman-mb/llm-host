@@ -1,0 +1,14 @@
+[Unit]
+Description=Run LLM canary health check every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=llm-host-canary.service
+
+[Install]
+# To enable:
+#   systemctl --user enable --now llm-host-canary.timer
+# (Uncomment the line below and run the above command.)
+# WantedBy=timers.target
