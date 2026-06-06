@@ -67,6 +67,53 @@ else
   fail "status.sh missing '|| true' after is-active"
 fi
 
+# (d) Positive assert: canary service, control service, and timer unit files
+#     reference only systemd unit names that actually exist in systemd/ or are
+#     the known third-party unit llama-swap.service.
+echo
+echo "--- (d) systemd unit cross-references are valid ---"
+
+SYSTEMD_DIR="$REPO/systemd"
+
+# Collect all unit files that exist in the repo.
+mapfile -t EXISTING_UNITS < <(ls "$SYSTEMD_DIR"/*.service "$SYSTEMD_DIR"/*.timer 2>/dev/null | xargs -I{} basename {} || true)
+# llama-swap.service is managed externally (installed from package/llama-swap binary).
+EXISTING_UNITS+=("llama-swap.service")
+
+# Build a lookup set.
+declare -A UNIT_SET=()
+for u in "${EXISTING_UNITS[@]}"; do
+  UNIT_SET["$u"]=1
+done
+
+# Unit files that reference other units (Wants=, After=, Unit=, etc.)
+CHECK_UNITS=(
+  "$SYSTEMD_DIR/llm-host-canary.service"
+  "$SYSTEMD_DIR/llm-host-canary.timer"
+  "$SYSTEMD_DIR/llm-host-control.service"
+)
+
+for unit_file in "${CHECK_UNITS[@]}"; do
+  [[ -f "$unit_file" ]] || continue
+  unit_name="$(basename "$unit_file")"
+  # Extract all referenced unit names from Wants=, After=, Requires=, Unit= directives.
+  refs="$(grep -oE '(Wants|After|Requires|Unit)\s*=\s*\S+' "$unit_file" \
+          | grep -oE '[^ =]+\.(service|timer)' || true)"
+  bad_refs=()
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    if [[ -z "${UNIT_SET[$ref]:-}" ]]; then
+      bad_refs+=("$ref")
+    fi
+  done <<< "$refs"
+
+  if [[ "${#bad_refs[@]}" -eq 0 ]]; then
+    ok "$unit_name: all referenced units exist in systemd/ or are known (llama-swap)"
+  else
+    fail "$unit_name: references non-existent units: ${bad_refs[*]}"
+  fi
+done
+
 # Summary
 echo
 echo "=== Results: $PASS passed, $FAIL failed ==="

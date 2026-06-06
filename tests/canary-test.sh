@@ -45,11 +45,18 @@ fi
 # T4: non-empty + printable content check is present
 # ---------------------------------------------------------------------------
 # Canary must check that the response .choices[0].message.content is non-empty
-# and contains only printable characters (not garbled/binary output).
-if grep -qE 'choices\[0\]' "$CANARY" && grep -qE '\-z\s+|length\s*==\s*0|empty|non.?empty|\[:print:\]|printable' "$CANARY"; then
+# AND contains only printable characters (not garbled/binary output).
+# Both conditions must be present: an emptiness guard and a printable guard.
+CHOICES_CHECK=0
+grep -qE 'choices\[0\]' "$CANARY" && CHOICES_CHECK=1
+EMPTY_CHECK=0
+grep -qE '\-z\s+"\$\{?CONTENT|length\s*==\s*0|\[:print:\]' "$CANARY" && EMPTY_CHECK=1
+PRINT_CHECK=0
+grep -qE '\[:print:\]|tr -d|NON_PRINTABLE' "$CANARY" && PRINT_CHECK=1
+if [[ "$CHOICES_CHECK" -eq 1 && "$EMPTY_CHECK" -eq 1 && "$PRINT_CHECK" -eq 1 ]]; then
   ok "T4: non-empty + printable content check present"
 else
-  fail "T4: non-empty/printable content check missing"
+  fail "T4: non-empty/printable content check missing (choices=$CHOICES_CHECK empty=$EMPTY_CHECK printable=$PRINT_CHECK)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -89,12 +96,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# T9: GTT orphan threshold is 5 GiB (5*1024^3 = 5368709120 bytes or 5GiB comparison)
+# T9: GTT orphan threshold is 5 GiB — must use the exact byte constant 5368709120
+# (5*1024^3). Pattern \b5G\b dropped: too broad, matches unrelated strings.
 # ---------------------------------------------------------------------------
-if grep -qE '5368709120|5\s*\*\s*1024.*1024.*1024|GTT.*5[Gg]|5[Gg].*GTT|\b5G\b' "$CANARY"; then
-  ok "T9: GTT orphan threshold 5 GiB present"
+if grep -qE '5368709120|5\s*\*\s*1024\s*\*\s*1024\s*\*\s*1024' "$CANARY"; then
+  ok "T9: GTT orphan threshold 5 GiB present (exact byte value)"
 else
-  fail "T9: GTT orphan threshold 5 GiB not found"
+  fail "T9: GTT orphan threshold 5368709120 not found in canary.sh"
 fi
 
 # ---------------------------------------------------------------------------

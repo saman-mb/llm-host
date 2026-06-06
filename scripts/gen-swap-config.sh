@@ -13,6 +13,12 @@ OUTPUT="${1:-$REPO/llama-swap.yaml}"
 # shellcheck source=../config.sh
 source "$CONFIG_FILE"
 
+# Guard: MODELS must be non-empty or the generated YAML would have no models.
+if [[ ${#MODELS[@]} -eq 0 ]]; then
+  printf 'gen-swap-config: MODELS is empty in %s — nothing to generate\n' "$CONFIG_FILE" >&2
+  exit 1
+fi
+
 # ---- helpers ----------------------------------------------------------------
 
 # Escape dots in a path for use as a grep/pkill -f literal pattern.
@@ -65,13 +71,13 @@ FLAGS_STR="${EXTRA_FLAGS[*]}"
     cmd_stop="$(make_cmd_stop "$path")"
 
     printf '  %s:\n' "$key"
-    printf '    cmd: ${llama} -m %s\n' "$path"
-    # If context differs from global, emit an override via env substitution note.
     if [[ "$ctx" != "$CONTEXT" ]]; then
-      # Re-emit cmd with per-model -c override inline (replaces macro's -c).
+      # Per-model context override: append -c after the macro — llama-server
+      # takes the last occurrence of a repeated flag, so this wins.
       printf '    # context override: %s tokens\n' "$ctx"
-      printf '    env:\n'
-      printf '      LLAMA_CONTEXT: %s\n' "$ctx"
+      printf '    cmd: ${llama} -m %s -c %s\n' "$path" "$ctx"
+    else
+      printf '    cmd: ${llama} -m %s\n' "$path"
     fi
     printf '    cmdStop: %s\n' "$cmd_stop"
     printf '\n'
