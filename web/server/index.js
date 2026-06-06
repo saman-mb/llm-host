@@ -9,7 +9,6 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = 3001;
 const LLAMA_SERVICE = 'llama-swap.service';
-const LLAMA_PORT = 8080;
 
 // Trust the proxy (Vite dev proxy forwards headers)
 app.set('trust proxy', 1);
@@ -17,7 +16,135 @@ app.set('trust proxy', 1);
 // JSON body parser (not strictly needed for GET/status, but good practice)
 app.use(express.json());
 
-// --- llama-server helpers ---
+// ---------------------------------------------------------------------------
+// UI Spec — single source of truth for the GNOME extension menu.
+// Edit this object to add/remove/reorder menu entries; the extension
+// re-fetches every `poll` seconds and rebuilds only when the spec changes.
+// ---------------------------------------------------------------------------
+
+/** @type {import('./ui-spec.d.ts').UISpec} */
+const DEFAULT_UI_SPEC = {
+  unit: 'llama-swap.service',
+  poll: 10,
+  items: [
+    // Status row (non-interactive, updated by extension from systemctl)
+    { type: 'status', label: 'Status: checking…' },
+
+    // Active model line (non-interactive, updated by extension via /v1/models)
+    { type: 'model', label: 'Model: —' },
+
+    { type: 'separator' },
+
+    // Start / Stop toggle — extension flips between start/stop based on unit state
+    {
+      type: 'toggle',
+      label: 'Start LLM',
+      labelActive: 'Stop LLM',
+      action: { kind: 'systemctl', args: ['start', 'llama-swap.service'] },
+      actionActive: { kind: 'systemctl', args: ['stop', 'llama-swap.service'] },
+    },
+
+    {
+      type: 'action',
+      label: 'Restart',
+      action: { kind: 'systemctl', args: ['restart', 'llama-swap.service'] },
+    },
+
+    // Scripts submenu
+    {
+      type: 'submenu',
+      label: 'Scripts',
+      items: [
+        {
+          type: 'action',
+          label: 'Sync model → OpenCode',
+          action: { kind: 'script', args: ['sync-opencode-models.sh'] },
+        },
+        {
+          type: 'action',
+          label: 'Sync model → Hermes/OpenCode',
+          action: { kind: 'script', args: ['sync-model.sh'] },
+        },
+        {
+          type: 'action',
+          label: 'Benchmark',
+          action: { kind: 'script', args: ['benchmark.sh'] },
+        },
+        {
+          type: 'action',
+          label: 'Test API',
+          action: { kind: 'script', args: ['test-api.sh'] },
+        },
+        {
+          type: 'action',
+          label: 'Status',
+          action: { kind: 'script', args: ['status.sh'] },
+        },
+      ],
+    },
+
+    // Switch model — populated dynamically from the model registry
+    {
+      type: 'submenu',
+      label: 'Switch model',
+      dynamic: 'models',
+      items: [],
+    },
+
+    // Embeddings — populated dynamically from the embed registry
+    {
+      type: 'submenu',
+      label: 'Embeddings',
+      dynamic: 'embeds',
+      items: [],
+    },
+
+    // GPU mode
+    {
+      type: 'submenu',
+      label: 'GPU mode',
+      items: [
+        {
+          type: 'action',
+          label: 'LLM mode (Qwen)',
+          action: { kind: 'http', args: ['POST', '/api/gpu-mode', { mode: 'llm' }] },
+        },
+        {
+          type: 'action',
+          label: 'Image mode (ComfyUI)',
+          action: { kind: 'http', args: ['POST', '/api/gpu-mode', { mode: 'image' }] },
+        },
+      ],
+    },
+
+    { type: 'separator' },
+
+    {
+      type: 'action',
+      label: 'Open ComfyUI ↗',
+      action: { kind: 'url', args: ['http://127.0.0.1:8188'] },
+    },
+    {
+      type: 'action',
+      label: 'Launch chat ↗',
+      action: { kind: 'url', args: ['http://localhost:8080'] },
+    },
+    {
+      type: 'action',
+      label: 'Open web control ↗',
+      action: { kind: 'url', args: ['http://localhost:8081'] },
+    },
+    {
+      type: 'action',
+      label: 'Tail journal',
+      action: { kind: 'script', args: ['_journal'] },
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// llama-server helpers
+// ---------------------------------------------------------------------------
 
 function systemctl(args) {
   return execSync(`systemctl --user ${args}`, {
@@ -28,7 +155,7 @@ function systemctl(args) {
 
 function checkLlamaStatus() {
   try {
-    const output = execSync(`systemctl --user status ${LLAMA_SERVICE}`, {
+    const output = execSync('systemctl --user status llama-swap.service', {
       encoding: 'utf-8',
       maxBuffer: 1024 * 512,
     });
@@ -43,7 +170,6 @@ function checkLlamaStatus() {
       return { running: true, uptime };
     }
 
-    const deadMatch = output.match(/Active:\s+inactive \(dead\)|dead \(result:\s+'exit-code'\)/i);
     return { running: false, uptime: null };
   } catch (err) {
     // systemctl may return exit code 3 when the unit is inactive or not found
@@ -59,8 +185,7 @@ function cleanModelName(name) {
 const SCRIPTS_DIR = join(__dirname, '..', '..', 'scripts');
 
 // Read the model registry + active selection from config.sh via models.sh.
-// Returns { active, models: [{ key, file, exists }], embeds: [{ key, exists }] }
-// or null on failure.
+// Returns { active, models: [{ key, file, exists }] } or null on failure.
 function readRegistry() {
   try {
     const out = execSync(`bash ${join(SCRIPTS_DIR, 'models.sh')}`, {
@@ -71,7 +196,7 @@ function readRegistry() {
     const reg = JSON.parse(out);
 
     // Parse EMBED_MODELS directly from config.sh (one "key|path" per line).
-    // We source config.sh in bash and printf each array element — safe, no user input.
+    // Sourced in bash with no user input interpolated.
     let embeds = [];
     try {
       const configPath = join(SCRIPTS_DIR, '..', 'config.sh');
@@ -123,7 +248,7 @@ async function getModelName() {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1500);
-    const res = await fetch(`http://localhost:${LLAMA_PORT}/v1/models`, { signal: ctrl.signal });
+    const res = await fetch('http://localhost:8080/v1/models', { signal: ctrl.signal });
     clearTimeout(timer);
     if (res.ok) {
       const j = await res.json();
@@ -137,7 +262,9 @@ async function getModelName() {
   return configuredModel();
 }
 
-// --- GPU coordination (Qwen <-> ComfyUI share one iGPU) ---
+// ---------------------------------------------------------------------------
+// GPU coordination (Qwen <-> ComfyUI share one iGPU)
+// ---------------------------------------------------------------------------
 
 const COMFYUI_URL = 'http://127.0.0.1:8188';
 
@@ -179,13 +306,21 @@ async function comfyuiUp() {
   }
 }
 
-// --- API Routes ---
+// ---------------------------------------------------------------------------
+// API Routes
+// ---------------------------------------------------------------------------
 
 app.get('/api/health', (_req, res) => {
   res.json({
     server: 'llm-host-control',
     version: '1.0.0',
   });
+});
+
+// Return the full UI menu spec. The GNOME extension polls this and rebuilds
+// its menu only when the spec hash changes.
+app.get('/api/ui', (_req, res) => {
+  res.json(DEFAULT_UI_SPEC);
 });
 
 app.get('/api/status', async (_req, res) => {
@@ -211,13 +346,13 @@ app.post('/api/stop', (_req, res) => {
     if (!status.running) {
       return res.json({
         success: true,
-        message: 'llama-swap is already stopped and disabled',
+        message: 'llama-server is already stopped and disabled; keep-warm disabled',
       });
     }
 
     res.json({
       success: true,
-      message: 'llama-swap stopped and disabled',
+      message: 'llama-server stopped and disabled; keep-warm disabled',
     });
   } catch (err) {
     res.status(500).json({
@@ -235,8 +370,8 @@ app.post('/api/start', (_req, res) => {
     res.json({
       success: true,
       message: already
-        ? 'llama-swap is already running'
-        : 'llama-swap enabled and starting',
+        ? 'llama-server is already running; keep-warm enabled'
+        : 'llama-server enabled and starting; keep-warm enabled',
     });
   } catch (err) {
     res.status(500).json({
@@ -272,7 +407,9 @@ app.post('/api/gpu-mode', async (req, res) => {
   }
 });
 
-// --- Model selection ---
+// ---------------------------------------------------------------------------
+// Model selection
+// ---------------------------------------------------------------------------
 
 // List the available models and which one is active.
 app.get('/api/models', (_req, res) => {
@@ -294,8 +431,8 @@ app.post('/api/model', (req, res) => {
     return res.status(400).json({ success: false, error: `Unknown model: ${key}` });
   }
   try {
-    // `key` is matched against the registry above before reaching here,
-    // so it can only ever be a known model key.
+    // `key` is interpolated into the command, but only after being matched
+    // against the registry above, so it can only ever be a known model key.
     // set-model.sh validates once more, persists the choice, and restarts.
     execFileSync('bash', [join(SCRIPTS_DIR, 'set-model.sh'), key], {
       encoding: 'utf-8',
@@ -308,7 +445,9 @@ app.post('/api/model', (req, res) => {
   }
 });
 
-// --- Run whitelisted scripts ---
+// ---------------------------------------------------------------------------
+// Run whitelisted scripts
+// ---------------------------------------------------------------------------
 
 // Map of safe, parameter-free scripts that can be triggered from the web UI.
 // Keys are the API names; values are filenames under ../../scripts.
@@ -318,6 +457,7 @@ const RUNNABLE_SCRIPTS = {
   'test-api': 'test-api.sh',
   benchmark: 'benchmark.sh',
   'sync-model': 'sync-model.sh',
+  'sync-opencode-models': 'sync-opencode-models.sh',
   'test-tools': 'test-tools.sh',
 };
 
@@ -343,7 +483,9 @@ app.post('/api/script/:name', (req, res) => {
   }
 });
 
-// --- Production: serve React build ---
+// ---------------------------------------------------------------------------
+// Production: serve React build
+// ---------------------------------------------------------------------------
 
 const distPath = join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
@@ -353,10 +495,13 @@ app.use((_req, res) => {
   res.sendFile(join(distPath, 'index.html'));
 });
 
-// --- Start server ---
+// ---------------------------------------------------------------------------
+// Start server
+// ---------------------------------------------------------------------------
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`llm-host-control server running on port ${PORT}`);
+  console.log(`  GET  http://localhost:${PORT}/api/ui`);
   console.log(`  GET  http://localhost:${PORT}/api/status`);
   console.log(`  POST http://localhost:${PORT}/api/stop`);
   console.log(`  POST http://localhost:${PORT}/api/start`);

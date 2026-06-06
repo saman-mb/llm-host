@@ -1,3 +1,7 @@
+// GNOME Shell extension — data-driven thin shell.
+// All menu structure comes from GET /api/ui on the control server.
+// The extension is a generic renderer; it has no hardcoded menu items.
+
 import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Gio from 'gi://Gio';
@@ -8,20 +12,188 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-const UNIT = 'llama-swap';
-const POLL_SECONDS = 10;
-const WEB_URL = 'http://localhost:8081';
-const SERVER_URL = 'http://localhost:8080';
-const COMFYUI_URL = 'http://127.0.0.1:8188';
 const CONTROL_URL = 'http://127.0.0.1:3001';
 const SCRIPTS_DIR = GLib.build_filenamev([GLib.get_home_dir(), 'dev', 'llm-host', 'scripts']);
 
+// ---------------------------------------------------------------------------
+// Tiny djb2 hash — used to detect spec changes without a deep equality check.
+// ---------------------------------------------------------------------------
+function hashString(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) + h) ^ s.charCodeAt(i);
+        h >>>= 0; // keep uint32
+    }
+    return h;
+}
+
+// ---------------------------------------------------------------------------
+// curl helpers (Gio.Subprocess — no external libraries needed in GNOME Shell)
+// ---------------------------------------------------------------------------
+function curlGet(url, cb) {
+    let proc;
+    try {
+        proc = Gio.Subprocess.new(
+            ['curl', '-s', '--max-time', '2', url],
+            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+        );
+    } catch (e) {
+        cb(null);
+        return;
+    }
+    proc.communicate_utf8_async(null, null, (p, res) => {
+        let stdout = '';
+        try { [, stdout] = p.communicate_utf8_finish(res); } catch { cb(null); return; }
+        try { cb(JSON.parse(stdout)); } catch { cb(null); }
+    });
+}
+
+function curlPost(url, body) {
+    try {
+        Gio.Subprocess.new(
+            ['curl', '-s', '-X', 'POST', url,
+             '-H', 'Content-Type: application/json',
+             '-d', JSON.stringify(body)],
+            Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
+        );
+    } catch { /* fire-and-forget */ }
+}
+
+// ---------------------------------------------------------------------------
+// Action handlers
+// ---------------------------------------------------------------------------
+function runSystemctl(args) {
+    try {
+        Gio.Subprocess.new(
+            ['systemctl', '--user', ...args],
+            Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
+        );
+    } catch { /* ignore */ }
+}
+
+function runScript(script) {
+    // Special token: tail the journal for the unit.
+    if (script === '_journal') {
+        // unit is not directly accessible here; we use a fixed name that
+        // matches DEFAULT_UI_SPEC.unit — the extension stores it on _spec.
+        const unit = Indicator._currentUnit || 'llama-swap.service';
+        const cmd = `gnome-terminal -- bash -lc "journalctl --user -u ${unit} -f; exec bash"`;
+        GLib.spawn_command_line_async(cmd);
+        return;
+    }
+    const cmd = `gnome-terminal -- bash -lc "${SCRIPTS_DIR}/${script}; echo; echo '[done — press Enter to close]'; read"`;
+    GLib.spawn_command_line_async(cmd);
+}
+
+function dispatchAction(action) {
+    if (!action) return;
+    const { kind, args } = action;
+    switch (kind) {
+        case 'systemctl':
+            runSystemctl(args);
+            break;
+        case 'script':
+            runScript(args[0]);
+            break;
+        case 'url':
+            GLib.spawn_command_line_async(`xdg-open ${args[0]}`);
+            break;
+        case 'http': {
+            const [method, path, body] = args;
+            if (method === 'POST') curlPost(`${CONTROL_URL}${path}`, body || {});
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Menu builder — converts a spec items array into PopupMenu nodes.
+// Accepts optional state context (running, activeModelKey) for dynamic items.
+// ---------------------------------------------------------------------------
+function buildItems(items, ctx, addFn) {
+    for (const item of items) {
+        switch (item.type) {
+            case 'separator':
+                addFn(new PopupMenu.PopupSeparatorMenuItem());
+                break;
+
+            case 'status': {
+                const mi = new PopupMenu.PopupMenuItem(item.label || 'Status: …', {reactive: false});
+                ctx.statusItem = mi;
+                addFn(mi);
+                break;
+            }
+
+            case 'model': {
+                const mi = new PopupMenu.PopupMenuItem(item.label || 'Model: —', {reactive: false});
+                mi.label.style = 'font-size: 11px; color: #94a3b8;';
+                ctx.modelItem = mi;
+                addFn(mi);
+                break;
+            }
+
+            case 'toggle': {
+                const running = ctx.running;
+                const label = running ? (item.labelActive || 'Stop LLM') : (item.label || 'Start LLM');
+                const action = running ? (item.actionActive || item.action) : item.action;
+                const mi = new PopupMenu.PopupMenuItem(label);
+                mi.connect('activate', () => {
+                    dispatchAction(action);
+                    // Optimistic refresh after systemctl settles
+                    ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
+                    ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
+                });
+                ctx.toggleItem = mi;
+                ctx.toggleItemSpec = item;
+                addFn(mi);
+                break;
+            }
+
+            case 'action': {
+                const mi = new PopupMenu.PopupMenuItem(item.label || '');
+                mi.connect('activate', () => {
+                    dispatchAction(item.action);
+                    // Refresh after systemctl actions so state dot updates quickly
+                    if (item.action && item.action.kind === 'systemctl') {
+                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
+                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
+                    }
+                    if (item.action && item.action.kind === 'http') {
+                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(2, () => ctx.refreshFn && ctx.refreshFn());
+                        ctx.oneShot GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; });GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => { ctx.refreshFn && ctx.refreshFn(); return GLib.SOURCE_REMOVE; }); ctx.oneShot(5, () => ctx.refreshFn && ctx.refreshFn());
+                    }
+                });
+                addFn(mi);
+                break;
+            }
+
+            case 'submenu': {
+                const sub = new PopupMenu.PopupSubMenuMenuItem(item.label || '');
+                if (item.dynamic === 'models') {
+                    ctx.modelMenu = sub;
+                    ctx.modelMenuSpec = item;
+                } else if (item.dynamic === 'embeds') {
+                    ctx.embedMenu = sub;
+                    ctx.embedMenuSpec = item;
+                } else if (item.items && item.items.length) {
+                    buildItems(item.items, ctx, (child) => sub.menu.addMenuItem(child));
+                }
+                addFn(sub);
+                break;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Indicator widget
+// ---------------------------------------------------------------------------
 const Indicator = GObject.registerClass(
 class LLMHostIndicator extends PanelMenu.Button {
     _init() {
         super._init(0.0, 'LLM Host');
 
-        // --- panel button: brain/chip glyph + colored status dot ---
+        // Panel button: text label + colored status dot
         const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
         this._label = new St.Label({
             text: 'LLM',
@@ -29,7 +201,7 @@ class LLMHostIndicator extends PanelMenu.Button {
             style: 'font-weight: 600; padding-right: 4px;',
         });
         this._dot = new St.Label({
-            text: '●', // ●
+            text: '●',
             y_align: 2,
             style: 'color: #888; font-size: 12px;',
         });
@@ -37,124 +209,111 @@ class LLMHostIndicator extends PanelMenu.Button {
         box.add_child(this._dot);
         this.add_child(box);
 
-        // --- dropdown menu ---
-        this._statusItem = new PopupMenu.PopupMenuItem('Checking…', {reactive: false});
-        this.menu.addMenuItem(this._statusItem);
-
-        this._modelItem = new PopupMenu.PopupMenuItem('Model: —', {reactive: false});
-        this._modelItem.label.style = 'font-size: 11px; color: #94a3b8;';
-        this.menu.addMenuItem(this._modelItem);
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-        this._toggleItem = new PopupMenu.PopupMenuItem('Start LLM');
-        this._toggleItem.connect('activate', () => this._toggle());
-        this.menu.addMenuItem(this._toggleItem);
-
-        const restartItem = new PopupMenu.PopupMenuItem('Restart');
-        restartItem.connect('activate', () => this._control('restart'));
-        this.menu.addMenuItem(restartItem);
-
-        // Quick script shortcuts — each opens in a terminal so output is visible.
-        const scriptsMenu = new PopupMenu.PopupSubMenuMenuItem('Scripts');
-        const addScript = (label, script) => {
-            const item = new PopupMenu.PopupMenuItem(label);
-            item.connect('activate', () => {
-                const cmd = `gnome-terminal -- bash -lc "${SCRIPTS_DIR}/${script}; echo; echo '[done — press Enter to close]'; read"`;
-                GLib.spawn_command_line_async(cmd);
-            });
-            scriptsMenu.menu.addMenuItem(item);
-        };
-        addScript('Sync model → Hermes/OpenCode', 'sync-model.sh');
-        addScript('Benchmark', 'benchmark.sh');
-        addScript('Test API', 'test-api.sh');
-        addScript('Status', 'status.sh');
-        this.menu.addMenuItem(scriptsMenu);
-
-        // Switch model — populated from the control server's registry.
-        this._modelMenu = new PopupMenu.PopupSubMenuMenuItem('Switch model');
-        this.menu.addMenuItem(this._modelMenu);
-        this._activeModelKey = null;
-        this._refreshModels();
-
-        // Embeddings — always-on models; click to warm-load via a 1-token probe.
-        this._embedMenu = new PopupMenu.PopupSubMenuMenuItem('Embeddings');
-        this.menu.addMenuItem(this._embedMenu);
-        this._refreshEmbeds();
-
-        // GPU mode — Qwen and ComfyUI share one iGPU; hand it to one or the other.
-        const gpuMenu = new PopupMenu.PopupSubMenuMenuItem('GPU mode');
-        const llmModeItem = new PopupMenu.PopupMenuItem('LLM mode (Qwen)');
-        llmModeItem.connect('activate', () => this._gpuMode('llm'));
-        gpuMenu.menu.addMenuItem(llmModeItem);
-        const imgModeItem = new PopupMenu.PopupMenuItem('Image mode (ComfyUI)');
-        imgModeItem.connect('activate', () => this._gpuMode('image'));
-        gpuMenu.menu.addMenuItem(imgModeItem);
-        this.menu.addMenuItem(gpuMenu);
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-        const comfyItem = new PopupMenu.PopupMenuItem('Open ComfyUI ↗');
-        comfyItem.connect('activate', () => {
-            GLib.spawn_command_line_async(`xdg-open ${COMFYUI_URL}`);
-        });
-        this.menu.addMenuItem(comfyItem);
-
-        const chatItem = new PopupMenu.PopupMenuItem('Launch llama chat ↗');
-        chatItem.connect('activate', () => {
-            GLib.spawn_command_line_async(`xdg-open ${SERVER_URL}`);
-        });
-        this.menu.addMenuItem(chatItem);
-
-        const webItem = new PopupMenu.PopupMenuItem('Open web control ↗');
-        webItem.connect('activate', () => {
-            GLib.spawn_command_line_async(`xdg-open ${WEB_URL}`);
-        });
-        this.menu.addMenuItem(webItem);
-
-        const logItem = new PopupMenu.PopupMenuItem('Tail journal');
-        logItem.connect('activate', () => {
-            const cmd = `gnome-terminal -- bash -lc "journalctl --user -u ${UNIT} -f; exec bash"`;
-            GLib.spawn_command_line_async(cmd);
-        });
-        this.menu.addMenuItem(logItem);
-
-        // --- state + polling ---
+        // Runtime state
         this._running = false;
-        this._refresh();
-        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, POLL_SECONDS, () => {
-            this._refresh();
+        this._spec = null;
+        this._specHash = 0;
+        this._activeModelKey = null;
+        this._ctx = {};
+
+        // Build an empty menu — spec not yet loaded
+        this._statusItem = null;
+        this._modelItem = null;
+        this._toggleItem = null;
+        this._modelMenu = null;
+        this._embedMenu = null;
+
+        // Bootstrap: fetch spec then start polling
+        this._fetchSpec(() => {
+            this._refreshUnit();
             this._refreshModels();
-            this._refreshEmbeds();
+        });
+
+        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 10, () => {
+            this._poll();
             return GLib.SOURCE_CONTINUE;
         });
     }
 
-    _refresh() {
+    // -----------------------------------------------------------------------
+    // Polling
+    // -----------------------------------------------------------------------
+    _poll() {
+        const pollSeconds = (this._spec && this._spec.poll) || 10;
+        this._fetchSpec(null); // fire-and-forget; callback handles rebuild
+        this._refreshUnit();
+        this._refreshModels();
+        // Adjust timer interval if spec.poll differs from default
+        // (GLib timers can't be rescheduled easily; the constant 10s is fine
+        //  for the default spec; override via spec.poll is advisory only here)
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Spec management
+    // -----------------------------------------------------------------------
+    _fetchSpec(callback) {
+        curlGet(`${CONTROL_URL}/api/ui`, (data) => {
+            if (!data || typeof data !== 'object') {
+                // Control server unreachable — keep last spec, rely on systemctl for status
+                callback && callback();
+                return;
+            }
+            const serialised = JSON.stringify(data);
+            const hash = hashString(serialised);
+            if (hash !== this._specHash) {
+                this._specHash = hash;
+                this._spec = data;
+                // Store unit for journal tail action
+                Indicator._currentUnit = data.unit || 'llama-swap.service';
+                this._rebuildMenu();
+            }
+            callback && callback();
+        });
+    }
+
+    _rebuildMenu() {
+        this.menu.removeAll();
+        const ctx = {
+            running: this._running,
+            refreshFn: () => { this._refreshUnit(); this._refreshModels(); },
+            oneShot: (seconds, fn) => this._oneShot(seconds, fn),
+        };
+        const items = (this._spec && this._spec.items) || [];
+        buildItems(items, ctx, (item) => this.menu.addMenuItem(item));
+
+        // Capture references to live nodes for state updates
+        this._statusItem = ctx.statusItem || null;
+        this._modelItem = ctx.modelItem || null;
+        this._toggleItem = ctx.toggleItem || null;
+        this._toggleItemSpec = ctx.toggleItemSpec || null;
+        this._modelMenu = ctx.modelMenu || null;
+        this._ctx = ctx;
+    }
+
+    // -----------------------------------------------------------------------
+    // Unit state (systemctl is-active)
+    // -----------------------------------------------------------------------
+    _refreshUnit() {
+        const unit = (this._spec && this._spec.unit) || 'llama-swap.service';
         let proc;
         try {
             proc = Gio.Subprocess.new(
-                ['systemctl', '--user', 'is-active', UNIT],
+                ['systemctl', '--user', 'is-active', unit],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
             );
         } catch (e) {
-            this._setState('error');
+            this._applyUnitState('error');
             return;
         }
         proc.communicate_utf8_async(null, null, (p, res) => {
             let stdout = '';
-            try {
-                [, stdout] = p.communicate_utf8_finish(res);
-            } catch (e) {
-                this._setState('error');
-                return;
-            }
-            this._setState((stdout || '').trim());
+            try { [, stdout] = p.communicate_utf8_finish(res); } catch { this._applyUnitState('error'); return; }
+            this._applyUnitState((stdout || '').trim());
         });
     }
 
-    _setState(state) {
-        // systemctl is-active prints: active | inactive | activating | deactivating | failed | unknown
+    _applyUnitState(state) {
         const running = state === 'active';
         const activating = state === 'activating' || state === 'reloading';
         this._running = running;
@@ -166,63 +325,54 @@ class LLMHostIndicator extends PanelMenu.Button {
         else color = '#94a3b8';
 
         this._dot.style = `color: ${color}; font-size: 12px;`;
-        this._statusItem.label.text = `Status: ${state || 'unknown'}`;
-        this._toggleItem.label.text = running ? 'Stop LLM' : 'Start LLM';
+
+        if (this._statusItem) {
+            this._statusItem.label.text = `Status: ${state || 'unknown'}`;
+        }
+
+        // Update toggle label in place (avoids full menu rebuild on every poll)
+        if (this._toggleItem && this._toggleItemSpec) {
+            const spec = this._toggleItemSpec;
+            this._toggleItem.label.text = running
+                ? (spec.labelActive || 'Stop LLM')
+                : (spec.label || 'Start LLM');
+        }
 
         if (running) this._refreshModel();
         else this._setModel('—');
     }
 
+    // -----------------------------------------------------------------------
+    // Running model name (from /v1/models)
+    // -----------------------------------------------------------------------
+    _refreshModel() {
+        curlGet('http://localhost:8080/v1/models', (data) => {
+            if (!data) { this._setModel('—'); return; }
+            let name = '';
+            try {
+                const m = (data.models && data.models[0]) || (data.data && data.data[0]) || {};
+                name = m.name || m.id || m.model || '';
+            } catch { name = ''; }
+            if (name.endsWith('.gguf')) name = name.slice(0, -5);
+            this._setModel(name || 'unknown');
+        });
+    }
+
     _setModel(name) {
-        this._modelItem.label.text = `Model: ${name}`;
-    }
-
-    _gpuMode(mode) {
-        // POST to the control server so the web UI and taskbar share one code path.
-        try {
-            Gio.Subprocess.new(
-                ['curl', '-s', '-X', 'POST', `${CONTROL_URL}/api/gpu-mode`,
-                 '-H', 'Content-Type: application/json',
-                 '-d', `{"mode":"${mode}"}`],
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            // ignore
+        if (this._modelItem) {
+            this._modelItem.label.text = `Model: ${name}`;
         }
-        // Reflect the new state once systemd settles.
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { this._refresh(); return GLib.SOURCE_REMOVE; });
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => { this._refresh(); return GLib.SOURCE_REMOVE; });
     }
 
-    // Pull the model registry from the control server and rebuild the submenu.
+    // -----------------------------------------------------------------------
+    // Dynamic model submenu (from /api/models)
+    // -----------------------------------------------------------------------
     _refreshModels() {
-        let proc;
-        try {
-            proc = Gio.Subprocess.new(
-                ['curl', '-s', '--max-time', '2', `${CONTROL_URL}/api/models`],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            return;
-        }
-        proc.communicate_utf8_async(null, null, (p, res) => {
-            let stdout = '';
-            try {
-                [, stdout] = p.communicate_utf8_finish(res);
-            } catch (e) {
-                return;
-            }
-            let data;
-            try {
-                data = JSON.parse(stdout);
-            } catch (e) {
-                return;
-            }
+        if (!this._modelMenu) return;
+        curlGet(`${CONTROL_URL}/api/models`, (data) => {
             if (!data || !Array.isArray(data.models)) return;
-            // Skip the rebuild when nothing changed — avoids collapsing the
-            // submenu if it happens to be open during a poll.
-            const built = this._modelMenu.menu.numMenuItems > 0;
-            if (built && data.active === this._activeModelKey) return;
+            // Skip rebuild when nothing changed
+            if (this._modelMenu.menu.numMenuItems > 0 && data.active === this._activeModelKey) return;
             this._activeModelKey = data.active || null;
             this._modelMenu.menu.removeAll();
             for (const m of data.models) {
@@ -232,175 +382,66 @@ class LLMHostIndicator extends PanelMenu.Button {
                 if (!m.exists || m.key === data.active) {
                     item.setSensitive(false);
                 } else {
-                    item.connect('activate', () => this._setModelChoice(m.key));
+                    item.connect('activate', () => this._switchModel(m.key));
                 }
                 this._modelMenu.menu.addMenuItem(item);
             }
         });
+
+        // Dynamic embeds submenu — poll /running for embed servers
+        this._refreshEmbeds();
     }
 
-    // Ask the control server to switch models (it persists + restarts).
-    _setModelChoice(key) {
-        try {
-            Gio.Subprocess.new(
-                ['curl', '-s', '-X', 'POST', `${CONTROL_URL}/api/model`,
-                 '-H', 'Content-Type: application/json',
-                 '-d', `{"model":"${key}"}`],
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            // ignore
-        }
-        // Reflect the new selection + loading state once systemd settles.
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => { this._refresh(); this._refreshModels(); return GLib.SOURCE_REMOVE; });
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 6, () => { this._refresh(); this._refreshModels(); return GLib.SOURCE_REMOVE; });
+    _switchModel(key) {
+        curlPost(`${CONTROL_URL}/api/model`, { model: key });
+        this._oneShot(2, () => { this._refreshUnit(); this._refreshModels(); });
+        this._oneShot(6, () => { this._refreshUnit(); this._refreshModels(); });
     }
 
-    // Populate the Embeddings submenu from /api/models embeds[], with live dot
-    // from /running (llama-swap reports which models are currently loaded).
+    // -----------------------------------------------------------------------
+    // Dynamic embeds submenu (from /running)
+    // -----------------------------------------------------------------------
     _refreshEmbeds() {
-        // Fetch /api/models to get embed list, then /running for load status.
-        let proc;
-        try {
-            proc = Gio.Subprocess.new(
-                ['curl', '-s', '--max-time', '2', `${CONTROL_URL}/api/models`],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            return;
-        }
-        proc.communicate_utf8_async(null, null, (p, res) => {
-            let stdout = '';
-            try { [, stdout] = p.communicate_utf8_finish(res); } catch (e) { return; }
-            let data;
-            try { data = JSON.parse(stdout); } catch (e) { return; }
-            const embeds = Array.isArray(data.embeds) ? data.embeds : [];
-            if (embeds.length === 0) return;
-
-            // Fetch /running to check which models llama-swap has warm.
-            let proc2;
-            try {
-                proc2 = Gio.Subprocess.new(
-                    ['curl', '-s', '--max-time', '2', `${SERVER_URL}/running`],
-                    Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
-                );
-            } catch (e) {
-                this._buildEmbedMenu(embeds, []);
+        if (!this._embedMenu) return;
+        curlGet('http://localhost:8080/running', (data) => {
+            const embeds = Array.isArray(data) ? data.filter(e => e && e.type === 'embed') : [];
+            this._embedMenu.menu.removeAll();
+            if (embeds.length === 0) {
+                const none = new PopupMenu.PopupMenuItem('No embed servers running', {reactive: false});
+                this._embedMenu.menu.addMenuItem(none);
                 return;
             }
-            proc2.communicate_utf8_async(null, null, (p2, res2) => {
-                let running = [];
-                let raw2 = '';
-                try { [, raw2] = p2.communicate_utf8_finish(res2); } catch (e) {}
-                try { running = JSON.parse(raw2) || []; } catch (e) {}
-                this._buildEmbedMenu(embeds, running);
-            });
+            for (const e of embeds) {
+                const item = new PopupMenu.PopupMenuItem(e.name || e.id || 'Embed');
+                item.setSensitive(false); // informational only
+                this._embedMenu.menu.addMenuItem(item);
+            }
         });
     }
 
-    _buildEmbedMenu(embeds, running) {
-        this._embedMenu.menu.removeAll();
-        for (const em of embeds) {
-            const loaded = Array.isArray(running) && running.includes(em.key);
-            const mark = loaded ? ' ●' : '';
-            const label = em.exists ? `${em.key}${mark}` : `${em.key} (missing)`;
-            const item = new PopupMenu.PopupMenuItem(label);
-            if (em.exists) {
-                item.connect('activate', () => this._loadEmbed(em.key));
-            } else {
-                item.setSensitive(false);
-            }
-            this._embedMenu.menu.addMenuItem(item);
-        }
-    }
-
-    // Warm-load an embed model by sending a 1-token embeddings request.
-    _loadEmbed(key) {
-        try {
-            Gio.Subprocess.new(
-                ['curl', '-s', '-X', 'POST', `${SERVER_URL}/v1/embeddings`,
-                 '-H', 'Content-Type: application/json',
-                 '-d', `{"model":"${key}","input":"."}`],
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            // ignore
-        }
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => { this._refreshEmbeds(); return GLib.SOURCE_REMOVE; });
-    }
-
-    _refreshModel() {
-        let proc;
-        try {
-            proc = Gio.Subprocess.new(
-                ['curl', '-s', '--max-time', '2', `${SERVER_URL}/v1/models`],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            this._setModel('—');
-            return;
-        }
-        proc.communicate_utf8_async(null, null, (p, res) => {
-            let stdout = '';
-            try {
-                [, stdout] = p.communicate_utf8_finish(res);
-            } catch (e) {
-                this._setModel('—');
-                return;
-            }
-            let name = '';
-            try {
-                const j = JSON.parse(stdout);
-                const m = (j.models && j.models[0]) || (j.data && j.data[0]) || {};
-                name = m.name || m.id || m.model || '';
-            } catch (e) {
-                name = '';
-            }
-            if (name.endsWith('.gguf')) name = name.slice(0, -5);
-            this._setModel(name || 'unknown');
-        });
-    }
-
-    _toggle() {
-        this._control(this._running ? 'stop' : 'start');
-    }
-
-    _runSystemctl(args) {
-        try {
-            Gio.Subprocess.new(
-                ['systemctl', '--user', ...args],
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
-            );
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    _control(action) {
-        if (action === 'stop') {
-            this._runSystemctl(['disable', '--now', `${UNIT}.service`]);
-        } else if (action === 'start') {
-            this._runSystemctl(['enable', '--now', `${UNIT}.service`]);
-        } else if (action === 'restart') {
-            this._runSystemctl(['enable', '--now', `${UNIT}.service`]);
-            this._runSystemctl(['restart', `${UNIT}.service`]);
-        }
-
-        // Optimistic refresh — show transition fast, then settle.
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-            this._refresh();
+    // -----------------------------------------------------------------------
+    // Cleanup
+    // -----------------------------------------------------------------------
+    // Tracked one-shot timer: auto-deregisters on fire, cancelled in destroy().
+    _oneShot(seconds, fn) {
+        this._oneShots ??= new Set();
+        const id = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
+            this._oneShots.delete(id);
+            fn();
             return GLib.SOURCE_REMOVE;
         });
-        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => {
-            this._refresh();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._oneShots.add(id);
+        return id;
     }
 
     destroy() {
         if (this._timer) {
             GLib.source_remove(this._timer);
             this._timer = null;
+        }
+        if (this._oneShots) {
+            for (const id of this._oneShots) GLib.source_remove(id);
+            this._oneShots.clear();
         }
         super.destroy();
     }
