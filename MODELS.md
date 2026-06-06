@@ -33,12 +33,23 @@ They complement each other — the 35B handles your day, the 27B handles your ni
 
 ## Reference
 
-| Key | File | Quant | Type | Size | 
+| Key | File | Quant | Type | Size |
 |-----|------|-------|------|------|
 | `gemma-4-26b` | Gemma-4-26B-A4B-it-Q8_0 | Q8_0 | MoE 26B-A4B | 24 GB |
 | `qwen3.6-35b-a3b-ud` | Qwen3.6-35B-A3B-UD-Q6_K | UD-Q6_K | MoE 35B-A3B | 27 GB |
 | `qwen3.6-27b` | Qwen3.6-27B-Q8_0 | Q8_0 | Dense 27B | 27 GB |
 | `gpt-oss-120b` | gpt-oss-120b-mxfp4 (3 shards) | MXFP4 | MoE 120B-A5B | 63 GB |
+
+### Embeddings (always-on, not swapped)
+
+Served in the `embeddings` llama-swap group alongside whichever chat model is active.
+They stay loaded persistently — no swap, no exclusive lock — on port 8080 via llama-swap routing.
+
+| Key | File | Quant | Type | Size |
+|-----|------|-------|------|------|
+| `nomic-embed-text` | nomic-embed-text-v1.5.Q8_0 | Q8_0 | Embed 137M | ~0.1 GB |
+
+Download: `huggingface-cli download nomic-ai/nomic-embed-text-v1.5-GGUF nomic-embed-text-v1.5.Q8_0.gguf --local-dir ~/models/nomic-embed-text/`
 
 ## Lemonade Server (installed, disabled)
 

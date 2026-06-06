@@ -15,6 +15,14 @@ MODELS=(
   "gpt-oss-120b|$HOME/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf"
 )
 
+# --- Embedding model registry ------------------------------------------------
+# Always-on models served beside the swapped chat models via llama-swap groups.
+# Format: "key|/absolute/path/to/model.gguf"
+# These are NOT swapped — they stay loaded persistently. Use for embeddings/RAG.
+EMBED_MODELS=(
+  "nomic-embed-text|$HOME/models/nomic-embed-text/nomic-embed-text-v1.5.Q8_0.gguf"
+)
+
 # Where the active model key is persisted between restarts.
 MODEL_STATE_FILE="${MODEL_STATE_FILE:-$HOME/.config/llm-host/model}"
 

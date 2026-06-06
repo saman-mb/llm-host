@@ -33,6 +33,8 @@ fi
 # Build a tab-delimited list of "key\tfile\tcontext\toutput" entries.
 # Each field is passed to Python via environment variable LLM_MODEL_LIST,
 # never injected into the Python source text.
+# Note: EMBED_MODELS (always-on embeddings) are intentionally excluded —
+# they are not chat/completion models and have no place in the opencode config.
 MODEL_LIST=""
 for entry in "${MODELS[@]}"; do
     key="${entry%%|*}"
