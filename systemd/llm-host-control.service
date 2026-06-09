@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/dev/llm-host/web
+WorkingDirectory=%h/dev/llm-host/control-server
 Environment=NODE_ENV=production
 Environment=PATH=%h/.local/share/mise/installs/node/lts/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/share/mise/installs/node/lts/bin/node server/index.js
+ExecStart=%h/.local/share/mise/installs/node/lts/bin/node index.js
 Restart=always
 RestartSec=5
 StandardOutput=append:%h/.local/share/llm-host-control.log

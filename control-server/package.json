@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Control API for the GNOME LLM-host menu (stop/start/restart llama-swap, model registry, ComfyUI VRAM release).",
   "scripts": {
-    "server:dev": "node server/index.js",
-    "start": "NODE_ENV=production node server/index.js"
+    "server:dev": "node index.js",
+    "start": "NODE_ENV=production node index.js"
   },
   "dependencies": {
     "express": "^5.2.1"

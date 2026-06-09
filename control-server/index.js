@@ -168,7 +168,7 @@ function cleanModelName(name) {
   return name.replace(/\.gguf$/i, '');
 }
 
-const SCRIPTS_DIR = join(__dirname, '..', '..', 'scripts');
+const SCRIPTS_DIR = join(__dirname, '..', 'scripts');
 
 // Read the model registry + active selection from config.sh via models.sh.
 // Returns { active, models: [{ key, file, exists }] } or null on failure.
@@ -455,18 +455,6 @@ app.post('/api/script/:name', (req, res) => {
       error: err.message,
     });
   }
-});
-
-// ---------------------------------------------------------------------------
-// Production: serve React build
-// ---------------------------------------------------------------------------
-
-const distPath = join(__dirname, '..', 'dist');
-app.use(express.static(distPath));
-
-// Catch-all: serve index.html for all non-API routes (SPA support)
-app.use((_req, res) => {
-  res.sendFile(join(distPath, 'index.html'));
 });
 
 // ---------------------------------------------------------------------------

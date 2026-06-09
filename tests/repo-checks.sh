@@ -11,31 +11,31 @@ fail() { echo "  FAIL: $*"; FAIL=$((FAIL + 1)); }
 
 echo "=== repo-checks ==="
 
-# (a) No file in scripts/, web/server/, gnome-extension/, systemd/ references
+# (a) No file in scripts/, control-server/, gnome-extension/, systemd/ references
 #     llama-server.service or keepwarm — those belong only in MODELS.md / memory / docs.
 echo
 echo "--- (a) stale service name references ---"
 
-FORBIDDEN_DIRS="$REPO/scripts $REPO/web/server $REPO/gnome-extension $REPO/systemd"
+FORBIDDEN_DIRS="$REPO/scripts $REPO/control-server $REPO/gnome-extension $REPO/systemd"
 FORBIDDEN_PATTERNS="llama-server\.service|llm-host-keepwarm"
 
 hits=$(grep -rE "$FORBIDDEN_PATTERNS" $FORBIDDEN_DIRS 2>/dev/null \
        | grep -v "^Binary" || true)
 
 if [ -z "$hits" ]; then
-  ok "no llama-server.service / keepwarm refs in scripts,web/server,gnome-extension,systemd"
+  ok "no llama-server.service / keepwarm refs in scripts,control-server,gnome-extension,systemd"
 else
   echo "$hits"
   fail "found forbidden service-name references:"
   echo "$hits" | sed 's/^/    /'
 fi
 
-# (b) checkLlamaStatus in web/server/index.js uses the LLAMA_SERVICE constant.
+# (b) checkLlamaStatus in control-server/index.js uses the LLAMA_SERVICE constant.
 #     We verify: (1) LLAMA_SERVICE constant is declared, (2) the status call uses \${LLAMA_SERVICE}.
 echo
 echo "--- (b) checkLlamaStatus uses LLAMA_SERVICE constant ---"
 
-IDX="$REPO/web/server/index.js"
+IDX="$REPO/control-server/index.js"
 
 if grep -q "const LLAMA_SERVICE" "$IDX"; then
   ok "LLAMA_SERVICE constant declared in index.js"

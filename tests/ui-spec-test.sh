@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/ui-spec-test.sh
-# Validate DEFAULT_UI_SPEC in web/server/index.js.
+# Validate DEFAULT_UI_SPEC in control-server/index.js.
 # Runs without a live server — extracts the spec via Node.js directly.
 # Also validates the GNOME extension passes node --check.
 # Usage: bash tests/ui-spec-test.sh
@@ -9,7 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SERVER_JS="$ROOT/web/server/index.js"
+SERVER_JS="$ROOT/control-server/index.js"
 EXT_JS="$ROOT/gnome-extension/llm-host@local/extension.js"
 export SERVER_JS EXT_JS
 
@@ -79,9 +79,9 @@ echo ""
 echo "-- Suite 1: Syntax --"
 
 if node --check "$SERVER_JS" 2>/dev/null; then
-    pass "node --check web/server/index.js"
+    pass "node --check control-server/index.js"
 else
-    fail "node --check web/server/index.js"
+    fail "node --check control-server/index.js"
 fi
 
 EXT_CHECK=$(node "$TMPDIR_LOCAL/check-ext.cjs" 2>/dev/null)
