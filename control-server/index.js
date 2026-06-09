@@ -8,12 +8,8 @@ const __dirname = dirname(__filename);
 
 const app = express();
 const PORT = 3001;
-const LLAMA_SERVICE = 'llama-swap.service';
 
-// Trust the proxy (Vite dev proxy forwards headers)
-app.set('trust proxy', 1);
-
-// JSON body parser (not strictly needed for GET/status, but good practice)
+// JSON body parser — needed for the POST /api/model body.
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
@@ -128,50 +124,10 @@ const DEFAULT_UI_SPEC = {
   ],
 };
 
-// ---------------------------------------------------------------------------
-// llama-server helpers
-// ---------------------------------------------------------------------------
-
-function systemctl(args) {
-  return execSync(`systemctl --user ${args}`, {
-    encoding: 'utf-8',
-    maxBuffer: 1024 * 256,
-  });
-}
-
-function checkLlamaStatus() {
-  try {
-    const output = execSync('systemctl --user status llama-swap.service', {
-      encoding: 'utf-8',
-      maxBuffer: 1024 * 512,
-    });
-
-    const activeMatch = output.match(/Active:\s+active \([^)]+\)/i);
-
-    if (activeMatch) {
-      // Extract uptime from output like "since ...; ... ago"
-      const uptimeMatch = output.match(/Active:\s+active \([^)]+\) since\s+(.*?);/);
-      const uptime = uptimeMatch ? uptimeMatch[1].trim() : null;
-
-      return { running: true, uptime };
-    }
-
-    return { running: false, uptime: null };
-  } catch (err) {
-    // systemctl may return exit code 3 when the unit is inactive or not found
-    // In that case, treat it as not running
-    return { running: false, uptime: null };
-  }
-}
-
-function cleanModelName(name) {
-  return name.replace(/\.gguf$/i, '');
-}
-
 const SCRIPTS_DIR = join(__dirname, '..', 'scripts');
 
 // Read the model registry + active selection from config.sh via models.sh.
-// Returns { active, models: [{ key, file, exists }] } or null on failure.
+// Returns { active, models: [{ key, file, exists }], embeds: [...] } or null.
 function readRegistry() {
   try {
     const out = execSync(`bash ${join(SCRIPTS_DIR, 'models.sh')}`, {
@@ -220,49 +176,9 @@ function readRegistry() {
   }
 }
 
-// Fallback: the model configured in config.sh (used when the server is down).
-function configuredModel() {
-  const reg = readRegistry();
-  if (!reg) return null;
-  const active = reg.models.find((m) => m.key === reg.active);
-  return active ? cleanModelName(active.file) : null;
-}
-
-// Authoritative: ask the running llama-server what model is actually loaded,
-// falling back to the configured model when it's unreachable.
-async function getModelName() {
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1500);
-    const res = await fetch('http://localhost:8080/v1/models', { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (res.ok) {
-      const j = await res.json();
-      const m = (j.models && j.models[0]) || (j.data && j.data[0]) || {};
-      const name = m.name || m.id || m.model || '';
-      if (name) return cleanModelName(name);
-    }
-  } catch {
-    // server down/unreachable — fall through to configured model
-  }
-  return configuredModel();
-}
-
-// ---------------------------------------------------------------------------
-// GPU coordination (Qwen <-> ComfyUI share one iGPU)
-// ---------------------------------------------------------------------------
-
+// Ask ComfyUI to drop its models from VRAM so the iGPU is free for the LLM.
 const COMFYUI_URL = 'http://127.0.0.1:8188';
 
-function stopLlama() {
-  systemctl(`disable --now ${LLAMA_SERVICE}`);
-}
-
-function startLlama() {
-  systemctl(`enable --now ${LLAMA_SERVICE}`);
-}
-
-// Ask ComfyUI to drop its models from VRAM so the iGPU is free for the LLM.
 async function freeComfyUI() {
   try {
     const ctrl = new AbortController();
@@ -280,20 +196,15 @@ async function freeComfyUI() {
   }
 }
 
-async function comfyuiUp() {
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1500);
-    const res = await fetch(`${COMFYUI_URL}/`, { signal: ctrl.signal });
-    clearTimeout(timer);
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 // ---------------------------------------------------------------------------
-// API Routes
+// API Routes — only what the GNOME extension consumes:
+//   /api/health  liveness probe (used by the test suite)
+//   /api/ui      menu spec
+//   /api/models  model + embed registry
+//   /api/model   switch model
+//   /api/comfyui/free  release ComfyUI VRAM
+// Start/stop/restart, status and scripts are driven by the extension directly
+// (systemctl / gnome-terminal), so they have no server endpoint.
 // ---------------------------------------------------------------------------
 
 app.get('/api/health', (_req, res) => {
@@ -309,65 +220,6 @@ app.get('/api/ui', (_req, res) => {
   res.json(DEFAULT_UI_SPEC);
 });
 
-app.get('/api/status', async (_req, res) => {
-  try {
-    const status = checkLlamaStatus();
-    const model = await getModelName();
-    const comfyui = await comfyuiUp();
-    // GPU is handed to the LLM when llama-server is up, else free for ComfyUI.
-    res.json({ ...status, model, comfyui, gpuMode: status.running ? 'llm' : 'image' });
-  } catch (err) {
-    res.status(500).json({
-      error: 'Failed to check llama-server status',
-      detail: err.message,
-    });
-  }
-});
-
-app.post('/api/stop', (_req, res) => {
-  try {
-    stopLlama();
-
-    const status = checkLlamaStatus();
-    if (!status.running) {
-      return res.json({
-        success: true,
-        message: 'llama-server is already stopped and disabled; keep-warm disabled',
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'llama-server stopped and disabled; keep-warm disabled',
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to stop llama-server',
-      detail: err.message,
-    });
-  }
-});
-
-app.post('/api/start', (_req, res) => {
-  try {
-    const already = checkLlamaStatus().running;
-    startLlama();
-    res.json({
-      success: true,
-      message: already
-        ? 'llama-server is already running; keep-warm enabled'
-        : 'llama-server enabled and starting; keep-warm enabled',
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to start llama-server',
-      detail: err.message,
-    });
-  }
-});
-
 // Release ComfyUI's VRAM without touching the LLM. Lets the user reclaim the
 // iGPU for the coding model on demand while leaving parallel use the default.
 app.post('/api/comfyui/free', async (_req, res) => {
@@ -380,10 +232,6 @@ app.post('/api/comfyui/free', async (_req, res) => {
       : 'ComfyUI not running or unreachable — nothing to free.',
   });
 });
-
-// ---------------------------------------------------------------------------
-// Model selection
-// ---------------------------------------------------------------------------
 
 // List the available models and which one is active.
 app.get('/api/models', (_req, res) => {
@@ -420,52 +268,14 @@ app.post('/api/model', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Run whitelisted scripts
-// ---------------------------------------------------------------------------
-
-// Map of safe, parameter-free scripts that can be triggered from the web UI.
-// Keys are the API names; values are filenames under ../../scripts.
-// (Excludes logs.sh — it tails forever — and download-model.sh — needs args.)
-const RUNNABLE_SCRIPTS = {
-  status: 'status.sh',
-  'test-api': 'test-api.sh',
-  benchmark: 'benchmark.sh',
-  'sync-model': 'sync-model.sh',
-  'sync-opencode-models': 'sync-opencode-models.sh',
-  'test-tools': 'test-tools.sh',
-};
-
-app.post('/api/script/:name', (req, res) => {
-  const file = RUNNABLE_SCRIPTS[req.params.name];
-  if (!file) {
-    return res.status(404).json({ success: false, error: `Unknown script: ${req.params.name}` });
-  }
-  try {
-    // No user input enters the command — `file` comes from the fixed whitelist.
-    const output = execSync(`bash ${join(SCRIPTS_DIR, file)} 2>&1`, {
-      encoding: 'utf-8',
-      timeout: 180000,
-      maxBuffer: 1024 * 1024,
-    });
-    res.json({ success: true, output });
-  } catch (err) {
-    res.json({
-      success: false,
-      output: `${err.stdout || ''}${err.stderr || ''}`.trim() || err.message,
-      error: err.message,
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`llm-host-control server running on port ${PORT}`);
   console.log(`  GET  http://localhost:${PORT}/api/ui`);
-  console.log(`  GET  http://localhost:${PORT}/api/status`);
-  console.log(`  POST http://localhost:${PORT}/api/stop`);
-  console.log(`  POST http://localhost:${PORT}/api/start`);
+  console.log(`  GET  http://localhost:${PORT}/api/models`);
+  console.log(`  POST http://localhost:${PORT}/api/model`);
+  console.log(`  POST http://localhost:${PORT}/api/comfyui/free`);
   console.log(`  GET  http://localhost:${PORT}/api/health`);
 });
