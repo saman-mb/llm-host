@@ -13,6 +13,7 @@ MODELS=(
   "qwen3.6-27b|$HOME/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
   "gemma-4-26b|$HOME/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf"
   "gpt-oss-120b|$HOME/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf"
+  "lfm2.5-8b-a1b|$HOME/models/LFM2.5-8B-A1B/LFM2.5-8B-A1B-Q4_K_M.gguf"
 )
 
 # --- Embedding model registry ------------------------------------------------
