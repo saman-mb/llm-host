@@ -99,22 +99,13 @@ const DEFAULT_UI_SPEC = {
       items: [],
     },
 
-    // GPU mode
+    // Manually release ComfyUI's VRAM back to the iGPU. The LLM and ComfyUI
+    // run in parallel by default; press this only when reclaiming memory for
+    // the coding model. Stop LLM frees the GPU the other way.
     {
-      type: 'submenu',
-      label: 'GPU mode',
-      items: [
-        {
-          type: 'action',
-          label: 'LLM mode (Qwen)',
-          action: { kind: 'http', args: ['POST', '/api/gpu-mode', { mode: 'llm' }] },
-        },
-        {
-          type: 'action',
-          label: 'Image mode (ComfyUI)',
-          action: { kind: 'http', args: ['POST', '/api/gpu-mode', { mode: 'image' }] },
-        },
-      ],
+      type: 'action',
+      label: 'Free ComfyUI VRAM',
+      action: { kind: 'http', args: ['POST', '/api/comfyui/free', {}] },
     },
 
     { type: 'separator' },
@@ -128,11 +119,6 @@ const DEFAULT_UI_SPEC = {
       type: 'action',
       label: 'Launch chat ↗',
       action: { kind: 'url', args: ['http://localhost:8080'] },
-    },
-    {
-      type: 'action',
-      label: 'Open web control ↗',
-      action: { kind: 'url', args: ['http://localhost:8081'] },
     },
     {
       type: 'action',
@@ -382,29 +368,17 @@ app.post('/api/start', (_req, res) => {
   }
 });
 
-// Switch which app owns the iGPU. 'image' = stop Qwen so ComfyUI has the GPU.
-// 'llm' = free ComfyUI's VRAM, then start Qwen.
-app.post('/api/gpu-mode', async (req, res) => {
-  const mode = req.body && req.body.mode;
-  if (mode !== 'llm' && mode !== 'image') {
-    return res.status(400).json({ success: false, error: "mode must be 'llm' or 'image'" });
-  }
-  try {
-    if (mode === 'image') {
-      stopLlama();
-      res.json({ success: true, mode, message: 'Image mode: Qwen stopped — iGPU free for ComfyUI.' });
-    } else {
-      const freed = await freeComfyUI();
-      startLlama();
-      res.json({
-        success: true,
-        mode,
-        message: `LLM mode: ${freed ? 'ComfyUI VRAM freed; ' : ''}Qwen starting.`,
-      });
-    }
-  } catch (err) {
-    res.status(500).json({ success: false, error: `Failed to switch to ${mode} mode`, detail: err.message });
-  }
+// Release ComfyUI's VRAM without touching the LLM. Lets the user reclaim the
+// iGPU for the coding model on demand while leaving parallel use the default.
+app.post('/api/comfyui/free', async (_req, res) => {
+  const freed = await freeComfyUI();
+  res.json({
+    success: true,
+    freed,
+    message: freed
+      ? 'ComfyUI VRAM freed — iGPU reclaimed.'
+      : 'ComfyUI not running or unreachable — nothing to free.',
+  });
 });
 
 // ---------------------------------------------------------------------------

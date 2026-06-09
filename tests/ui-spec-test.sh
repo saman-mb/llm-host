@@ -153,10 +153,16 @@ check_label "Restart"
 check_label "Scripts"
 check_label "Switch model"
 check_label "Embeddings"
-check_label "GPU mode"
-check_label "LLM mode (Qwen)"
-check_label "Image mode (ComfyUI)"
+check_label "Free ComfyUI VRAM"
 check_label "Tail journal"
+
+# Bind the "Free ComfyUI VRAM" item to its action target so a typo'd path or
+# wrong method can't slip past the label-only check above.
+if echo "$SPEC" | grep -q '\["POST","/api/comfyui/free"'; then
+    pass "'Free ComfyUI VRAM' action targets POST /api/comfyui/free"
+else
+    fail "'Free ComfyUI VRAM' action targets POST /api/comfyui/free"
+fi
 
 if echo "$SPEC" | grep -q "sync-opencode-models.sh"; then
     pass "sync-opencode-models.sh present in spec"
@@ -166,7 +172,8 @@ fi
 
 if echo "$SPEC" | grep -q "8188"; then pass "ComfyUI URL (8188) present"; else fail "ComfyUI URL (8188) present"; fi
 if echo "$SPEC" | grep -q "8080"; then pass "chat URL (8080) present"; else fail "chat URL (8080) present"; fi
-if echo "$SPEC" | grep -q "8081"; then pass "web control URL (8081) present"; else fail "web control URL (8081) present"; fi
+# Web control dashboard removed — GNOME menu is the only control surface now.
+if echo "$SPEC" | grep -q "8081"; then fail "web control URL (8081) should be gone"; else pass "web control URL (8081) removed"; fi
 
 if echo "$SPEC" | grep -q '"dynamic":"models"'; then pass "dynamic:models submenu present"; else fail "dynamic:models submenu present"; fi
 if echo "$SPEC" | grep -q '"dynamic":"embeds"'; then pass "dynamic:embeds submenu present"; else fail "dynamic:embeds submenu present"; fi

@@ -288,6 +288,7 @@ class LLMHostIndicator extends PanelMenu.Button {
         this._toggleItem = ctx.toggleItem || null;
         this._toggleItemSpec = ctx.toggleItemSpec || null;
         this._modelMenu = ctx.modelMenu || null;
+        this._embedMenu = ctx.embedMenu || null;
         this._ctx = ctx;
     }
 
@@ -368,27 +369,30 @@ class LLMHostIndicator extends PanelMenu.Button {
     // Dynamic model submenu (from /api/models)
     // -----------------------------------------------------------------------
     _refreshModels() {
-        if (!this._modelMenu) return;
-        curlGet(`${CONTROL_URL}/api/models`, (data) => {
-            if (!data || !Array.isArray(data.models)) return;
-            // Skip rebuild when nothing changed
-            if (this._modelMenu.menu.numMenuItems > 0 && data.active === this._activeModelKey) return;
-            this._activeModelKey = data.active || null;
-            this._modelMenu.menu.removeAll();
-            for (const m of data.models) {
-                const mark = m.key === data.active ? ' ●' : '';
-                const label = m.exists ? `${m.key}${mark}` : `${m.key} (missing)`;
-                const item = new PopupMenu.PopupMenuItem(label);
-                if (!m.exists || m.key === data.active) {
-                    item.setSensitive(false);
-                } else {
-                    item.connect('activate', () => this._switchModel(m.key));
+        const modelMenu = this._modelMenu;
+        if (modelMenu) {
+            curlGet(`${CONTROL_URL}/api/models`, (data) => {
+                if (!data || !Array.isArray(data.models)) return;
+                // Skip rebuild when nothing changed
+                if (modelMenu.menu.numMenuItems > 0 && data.active === this._activeModelKey) return;
+                this._activeModelKey = data.active || null;
+                modelMenu.menu.removeAll();
+                for (const m of data.models) {
+                    const mark = m.key === data.active ? ' ●' : '';
+                    const label = m.exists ? `${m.key}${mark}` : `${m.key} (missing)`;
+                    const item = new PopupMenu.PopupMenuItem(label);
+                    if (!m.exists || m.key === data.active) {
+                        item.setSensitive(false);
+                    } else {
+                        item.connect('activate', () => this._switchModel(m.key));
+                    }
+                    modelMenu.menu.addMenuItem(item);
                 }
-                this._modelMenu.menu.addMenuItem(item);
-            }
-        });
+            });
+        }
 
-        // Dynamic embeds submenu — poll /running for embed servers
+        // Embeds are an independent dynamic submenu — refresh regardless of
+        // whether the model submenu is present.
         this._refreshEmbeds();
     }
 
@@ -402,19 +406,30 @@ class LLMHostIndicator extends PanelMenu.Button {
     // Dynamic embeds submenu (from /running)
     // -----------------------------------------------------------------------
     _refreshEmbeds() {
-        if (!this._embedMenu) return;
+        const embedMenu = this._embedMenu;
+        if (!embedMenu) return;
         curlGet('http://localhost:8080/running', (data) => {
-            const embeds = Array.isArray(data) ? data.filter(e => e && e.type === 'embed') : [];
-            this._embedMenu.menu.removeAll();
+            // llama-swap /running returns { running: [{ model, state, cmd, ... }] }.
+            // Embed servers carry no explicit type — identify them by the
+            // --embedding flag in their launch command.
+            const running = data && Array.isArray(data.running) ? data.running : [];
+            const embeds = running.filter(
+                e => e && typeof e.cmd === 'string' && e.cmd.includes('--embedding'));
+            // Snapshot the menu node so a concurrent _rebuildMenu (spec change
+            // mid-poll) doesn't leave us writing into a detached submenu.
+            if (embedMenu !== this._embedMenu) return;
+            embedMenu.menu.removeAll();
             if (embeds.length === 0) {
                 const none = new PopupMenu.PopupMenuItem('No embed servers running', {reactive: false});
-                this._embedMenu.menu.addMenuItem(none);
+                embedMenu.menu.addMenuItem(none);
                 return;
             }
             for (const e of embeds) {
-                const item = new PopupMenu.PopupMenuItem(e.name || e.id || 'Embed');
+                const name = e.model || e.name || 'Embed';
+                const state = e.state ? ` (${e.state})` : '';
+                const item = new PopupMenu.PopupMenuItem(`${name}${state}`);
                 item.setSensitive(false); // informational only
-                this._embedMenu.menu.addMenuItem(item);
+                embedMenu.menu.addMenuItem(item);
             }
         });
     }
