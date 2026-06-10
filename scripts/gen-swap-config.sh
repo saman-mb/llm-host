@@ -134,6 +134,20 @@ FLAGS_STR="${EXTRA_FLAGS[*]}"
       printf '      - %s\n' "$key"
     done
     printf '\n'
+
+    # Preload embed models at startup. `persistent: true` keeps a model
+    # resident once loaded, but llama-swap still loads lazily — without this
+    # hook the embed server only starts on first request, so after a cold
+    # boot /running is empty until something hits the embed endpoint.
+    printf 'hooks:\n'
+    printf '  on_startup:\n'
+    printf '    preload:\n'
+    for entry in "${EMBED_MODELS[@]:-}"; do
+      [[ -z "$entry" ]] && continue
+      key="${entry%%|*}"
+      printf '      - %s\n' "$key"
+    done
+    printf '\n'
   fi
 
 } > "$OUTPUT"

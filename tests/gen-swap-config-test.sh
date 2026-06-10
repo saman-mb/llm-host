@@ -379,7 +379,25 @@ if grep -q 'groups:' "$NO_EMBED_OUT"; then
 else
   ok "T24: empty EMBED_MODELS → no groups section emitted"
 fi
+
+# --- T26: empty EMBED_MODELS → no hooks/preload section either ---------------
+if grep -qE 'hooks:|on_startup:|preload:' "$NO_EMBED_OUT"; then
+  fail "T26: no EMBED_MODELS should produce no hooks/preload section"
+else
+  ok "T26: empty EMBED_MODELS → no hooks section emitted"
+fi
 rm -f "$NO_EMBED_CONFIG" "$NO_EMBED_OUT"
+
+# --- T25: EMBED_MODELS present → on_startup preload lists the embed model ----
+# Without this, persistent:true models still load lazily, so /running is empty
+# after a cold boot until the embed endpoint is first hit.
+if grep -qE '^\s*on_startup:' "$EMBED_OUT" \
+   && grep -A3 'on_startup:' "$EMBED_OUT" | grep -q 'preload:' \
+   && grep -A4 'preload:' "$EMBED_OUT" | grep -q 'nomic-embed-text'; then
+  ok "T25: hooks.on_startup.preload includes nomic-embed-text"
+else
+  fail "T25: hooks.on_startup.preload missing or omits nomic-embed-text"
+fi
 
 rm -f "$EMBED_CONFIG" "$EMBED_OUT"
 

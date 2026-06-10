@@ -54,3 +54,8 @@ groups:
     members:
       - nomic-embed-text
 
+hooks:
+  on_startup:
+    preload:
+      - nomic-embed-text
+

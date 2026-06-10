@@ -19,7 +19,8 @@ MODELS=(
 # --- Embedding model registry ------------------------------------------------
 # Always-on models served beside the swapped chat models via llama-swap groups.
 # Format: "key|/absolute/path/to/model.gguf"
-# These are NOT swapped — they stay loaded persistently. Use for embeddings/RAG.
+# These are NOT swapped with chat models. They preload at llama-swap startup
+# (hooks.on_startup.preload) and stay resident (persistent:true). Embeddings/RAG.
 EMBED_MODELS=(
   "nomic-embed-text|$HOME/models/nomic-embed-text/nomic-embed-text-v1.5.Q8_0.gguf"
 )
