@@ -28,9 +28,43 @@ function hashString(s) {
 }
 
 // ---------------------------------------------------------------------------
-// curl helpers (Gio.Subprocess — no external libraries needed in GNOME Shell)
+// Pure helpers — extractable for unit testing outside GNOME Shell.
 // ---------------------------------------------------------------------------
-function curlGet(url, cb) {
+
+/** Collect all unit names from a spec (primary + toggle units). */
+function collectUnits(spec) {
+    const units = new Set([spec?.unit || 'llama-swap.service']);
+    const items = spec?.items || [];
+    for (const item of items) {
+        if (item.type === 'toggle' && item.unit) units.add(item.unit);
+        if (item.type === 'submenu' && item.items) {
+            for (const child of item.items) {
+                if (child.type === 'toggle' && child.unit) units.add(child.unit);
+            }
+        }
+    }
+    return units;
+}
+
+/**
+ * Derive toggle label from unit state.
+ * Returns { label: string, isRunning: boolean }.
+ */
+function computeToggleLabel(state, spec) {
+    const activating = state === 'activating' || state === 'reloading';
+    const running = state === 'active' || activating;
+    return {
+        label: running ? (spec.labelActive || '') : (spec.label || ''),
+        isRunning: running,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helpers — Gio.Subprocess with curl, ref stored to prevent GC killing it
+// ---------------------------------------------------------------------------
+const _procs = [];
+
+function httpGet(url, cb) {
     let proc;
     try {
         proc = Gio.Subprocess.new(
@@ -41,22 +75,55 @@ function curlGet(url, cb) {
         cb(null);
         return;
     }
+    _procs.push(proc);
     proc.communicate_utf8_async(null, null, (p, res) => {
-        let stdout = '';
-        try { [, stdout] = p.communicate_utf8_finish(res); } catch { cb(null); return; }
-        try { cb(JSON.parse(stdout)); } catch { cb(null); }
+        try {
+            const [, stdout] = p.communicate_utf8_finish(res);
+            cb(JSON.parse(stdout));
+        } catch {
+            cb(null);
+        }
+        const idx = _procs.indexOf(proc);
+        if (idx >= 0) _procs.splice(idx, 1);
     });
 }
 
-function curlPost(url, body) {
+function httpPost(url, body) {
     try {
-        Gio.Subprocess.new(
-            ['curl', '-s', '-X', 'POST', url,
+        const proc = Gio.Subprocess.new(
+            ['curl', '-s', '--max-time', '3', '-X', 'POST', url,
              '-H', 'Content-Type: application/json',
              '-d', JSON.stringify(body)],
             Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
         );
+        _procs.push(proc);
     } catch { /* fire-and-forget */ }
+}
+
+function httpPostAsync(url, body, cb) {
+    let proc;
+    try {
+        proc = Gio.Subprocess.new(
+            ['curl', '-s', '--max-time', '5', '-X', 'POST', url,
+             '-H', 'Content-Type: application/json',
+             '-d', JSON.stringify(body)],
+            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+        );
+    } catch (e) {
+        cb(null);
+        return;
+    }
+    _procs.push(proc);
+    proc.communicate_utf8_async(null, null, (p, res) => {
+        try {
+            const [, stdout] = p.communicate_utf8_finish(res);
+            cb(JSON.parse(stdout));
+        } catch {
+            cb(null);
+        }
+        const idx = _procs.indexOf(proc);
+        if (idx >= 0) _procs.splice(idx, 1);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +135,9 @@ function runSystemctl(args) {
             ['systemctl', '--user', ...args],
             Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
         );
-    } catch { /* ignore */ }
+    } catch (e) {
+        log(`[llm-host] runSystemctl failed: ${e.message}`);
+    }
 }
 
 function runScript(script) {
@@ -85,7 +154,7 @@ function runScript(script) {
     GLib.spawn_command_line_async(cmd);
 }
 
-function dispatchAction(action) {
+function dispatchAction(action, httpCallback) {
     if (!action) return;
     const { kind, args } = action;
     switch (kind) {
@@ -100,7 +169,13 @@ function dispatchAction(action) {
             break;
         case 'http': {
             const [method, path, body] = args;
-            if (method === 'POST') curlPost(`${CONTROL_URL}${path}`, body || {});
+            if (method === 'POST') {
+                if (httpCallback) {
+                    httpPostAsync(`${CONTROL_URL}${path}`, body || {}, httpCallback);
+                } else {
+                    httpPost(`${CONTROL_URL}${path}`, body || {});
+                }
+            }
             break;
         }
     }
@@ -119,12 +194,20 @@ function buildItems(items, ctx, addFn) {
 
             case 'status': {
                 const mi = new PopupMenu.PopupMenuItem(item.label || 'Status: …', {reactive: false});
-                ctx.statusItem = mi;
+                // Detect service-specific status lines for independent refresh
+                if (item.label && item.label.startsWith('ComfyUI:')) {
+                    ctx.comfyuiStatusItem = mi;
+                } else if (item.label && item.label.startsWith('Embeddings:')) {
+                    ctx.embedStatusItem = mi;
+                } else {
+                    ctx.statusItem = mi;
+                }
                 addFn(mi);
                 break;
             }
 
             case 'model': {
+                // Kept for backwards compatibility — not used in current spec
                 const mi = new PopupMenu.PopupMenuItem(item.label || 'Model: —', {reactive: false});
                 mi.label.style = 'font-size: 11px; color: #94a3b8;';
                 ctx.modelItem = mi;
@@ -133,18 +216,26 @@ function buildItems(items, ctx, addFn) {
             }
 
             case 'toggle': {
-                const running = ctx.running;
-                const label = running ? (item.labelActive || 'Stop LLM') : (item.label || 'Start LLM');
-                const action = running ? (item.actionActive || item.action) : item.action;
+                const unit = item.unit || ctx.unit;
+                // Check running state for this specific unit (from ctx.runningUnits map)
+                const isRunning = ctx.runningUnits ? (ctx.runningUnits.get(unit) === 'active') : false;
+                const label = isRunning ? (item.labelActive || '') : (item.label || '');
                 const mi = new PopupMenu.PopupMenuItem(label);
                 mi.connect('activate', () => {
-                    dispatchAction(action);
-                    // Optimistic refresh after systemctl settles
+                    // Resolve action from CURRENT state at click time. The label is updated
+                    // live by _applyUnitState on every poll, so a build-time snapshot of the
+                    // action would go stale (e.g. show "Stop" but still fire "start").
+                    const state = ctx.currentState ? ctx.currentState(unit) : null;
+                    // Same running test as computeToggleLabel — keeps label and action in sync
+                    // (activating/reloading count as running, so the click fires actionActive).
+                    const runningNow = computeToggleLabel(state, item).isRunning;
+                    const action = runningNow ? (item.actionActive || item.action) : item.action;
+                    log(`[llm-host] toggle activate: unit=${unit} running=${runningNow} action=${JSON.stringify(action)}`);
+                    dispatchAction(action, ctx.httpCallback || null);
                     ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
                     ctx.oneShot(4, () => ctx.refreshFn && ctx.refreshFn());
                 });
-                ctx.toggleItem = mi;
-                ctx.toggleItemSpec = item;
+                ctx.toggles.set(unit, { item: mi, spec: item });
                 addFn(mi);
                 break;
             }
@@ -152,7 +243,8 @@ function buildItems(items, ctx, addFn) {
             case 'action': {
                 const mi = new PopupMenu.PopupMenuItem(item.label || '');
                 mi.connect('activate', () => {
-                    dispatchAction(item.action);
+                    const httpCb = ctx.httpCallback || null;
+                    dispatchAction(item.action, httpCb);
                     // Refresh after systemctl actions so state dot updates quickly
                     if (item.action && item.action.kind === 'systemctl') {
                         ctx.oneShot(1, () => ctx.refreshFn && ctx.refreshFn());
@@ -213,20 +305,25 @@ class LLMHostIndicator extends PanelMenu.Button {
         this._running = false;
         this._spec = null;
         this._specHash = 0;
+        this._generation = 0;
         this._activeModelKey = null;
+        this._unitStates = new Map();
         this._ctx = {};
 
         // Build an empty menu — spec not yet loaded
         this._statusItem = null;
         this._modelItem = null;
-        this._toggleItem = null;
+        this._toggles = new Map();
         this._modelMenu = null;
         this._embedMenu = null;
+        this._embedStatusItem = null;
+        this._comfyuiStatusItem = null;
 
         // Bootstrap: fetch spec then start polling
         this._fetchSpec(() => {
             this._refreshUnit();
             this._refreshModels();
+            this._refreshEmbedStatus();
         });
 
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 10, () => {
@@ -239,13 +336,11 @@ class LLMHostIndicator extends PanelMenu.Button {
     // Polling
     // -----------------------------------------------------------------------
     _poll() {
-        const pollSeconds = (this._spec && this._spec.poll) || 10;
-        this._fetchSpec(null); // fire-and-forget; callback handles rebuild
-        this._refreshUnit();
-        this._refreshModels();
-        // Adjust timer interval if spec.poll differs from default
-        // (GLib timers can't be rescheduled easily; the constant 10s is fine
-        //  for the default spec; override via spec.poll is advisory only here)
+        this._fetchSpec(() => {
+            this._refreshUnit();
+            this._refreshModels();
+            this._refreshEmbedStatus();
+        });
         return;
     }
 
@@ -253,7 +348,7 @@ class LLMHostIndicator extends PanelMenu.Button {
     // Spec management
     // -----------------------------------------------------------------------
     _fetchSpec(callback) {
-        curlGet(`${CONTROL_URL}/api/ui`, (data) => {
+        httpGet(`${CONTROL_URL}/api/ui`, (data) => {
             if (!data || typeof data !== 'object') {
                 // Control server unreachable — keep last spec, rely on systemctl for status
                 callback && callback();
@@ -274,21 +369,40 @@ class LLMHostIndicator extends PanelMenu.Button {
 
     _rebuildMenu() {
         this.menu.removeAll();
+        this._generation++;
+        const gen = this._generation;
         const ctx = {
             running: this._running,
-            refreshFn: () => { this._refreshUnit(); this._refreshModels(); },
+            unit: this._spec?.unit || 'llama-swap.service',
+            toggles: new Map(),
+            runningUnits: new Map(this._unitStates),
+            // Live unit-state lookup — read at click time, not snapshotted at build.
+            currentState: (u) => this._unitStates.get(u),
+            refreshFn: () => {
+                this._refreshUnit();
+                this._refreshModels();
+                this._refreshEmbedStatus();
+            },
             oneShot: (seconds, fn) => this._oneShot(seconds, fn),
+            httpCallback: (response) => {
+                if (this._statusItem && response && response.message) {
+                    this._statusItem.label.text = response.message;
+                    this._oneShot(5, () => {
+                        this._refreshUnit();
+                    });
+                }
+            },
         };
         const items = (this._spec && this._spec.items) || [];
         buildItems(items, ctx, (item) => this.menu.addMenuItem(item));
 
-        // Capture references to live nodes for state updates
         this._statusItem = ctx.statusItem || null;
         this._modelItem = ctx.modelItem || null;
-        this._toggleItem = ctx.toggleItem || null;
-        this._toggleItemSpec = ctx.toggleItemSpec || null;
+        this._toggles = ctx.toggles;
         this._modelMenu = ctx.modelMenu || null;
         this._embedMenu = ctx.embedMenu || null;
+        this._embedStatusItem = ctx.embedStatusItem || null;
+        this._comfyuiStatusItem = ctx.comfyuiStatusItem || null;
         this._ctx = ctx;
     }
 
@@ -296,7 +410,13 @@ class LLMHostIndicator extends PanelMenu.Button {
     // Unit state (systemctl is-active)
     // -----------------------------------------------------------------------
     _refreshUnit() {
-        const unit = (this._spec && this._spec.unit) || 'llama-swap.service';
+        for (const unit of collectUnits(this._spec)) {
+            this._checkUnit(unit);
+        }
+    }
+
+    _checkUnit(unit) {
+        const gen = this._generation;
         let proc;
         try {
             proc = Gio.Subprocess.new(
@@ -304,65 +424,96 @@ class LLMHostIndicator extends PanelMenu.Button {
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
             );
         } catch (e) {
-            this._applyUnitState('error');
+            this._applyUnitState(unit, 'error', gen);
             return;
         }
         proc.communicate_utf8_async(null, null, (p, res) => {
+            if (gen !== this._generation) return;
             let stdout = '';
-            try { [, stdout] = p.communicate_utf8_finish(res); } catch { this._applyUnitState('error'); return; }
-            this._applyUnitState((stdout || '').trim());
+            try { [, stdout] = p.communicate_utf8_finish(res); } catch { this._applyUnitState(unit, 'error', gen); return; }
+            this._applyUnitState(unit, (stdout || '').trim(), gen);
         });
     }
 
-    _applyUnitState(state) {
-        const running = state === 'active';
+    _applyUnitState(unit, state, gen) {
+        if (gen !== undefined && gen !== this._generation) return;
+        this._unitStates.set(unit, state);
         const activating = state === 'activating' || state === 'reloading';
-        this._running = running;
 
-        let color;
-        if (running) color = '#22c55e';
-        else if (activating) color = '#f59e0b';
-        else if (state === 'failed') color = '#ef4444';
-        else color = '#94a3b8';
+        // For the primary unit, update global dot + panel state
+        const primaryUnit = this._spec?.unit || 'llama-swap.service';
+        if (unit === primaryUnit) {
+            this._running = state === 'active';
 
-        this._dot.style = `color: ${color}; font-size: 12px;`;
+            let color;
+            if (state === 'active') color = '#22c55e';
+            else if (activating) color = '#f59e0b';
+            else if (state === 'failed') color = '#ef4444';
+            else color = '#94a3b8';
 
-        if (this._statusItem) {
-            this._statusItem.label.text = `Status: ${state || 'unknown'}`;
+            this._dot.style = `color: ${color}; font-size: 12px;`;
+
+            // Update status label — preserve service-scoped prefix from spec
+            if (this._statusItem) {
+                try {
+                    const prefix = this._statusItem.label.text.split(':')[0];
+                    this._statusItem.label.text = `${prefix}: ${state || 'unknown'}`;
+                } catch { /* object disposed */ }
+            }
         }
 
-        // Update toggle label in place (avoids full menu rebuild on every poll)
-        if (this._toggleItem && this._toggleItemSpec) {
-            const spec = this._toggleItemSpec;
-            this._toggleItem.label.text = running
-                ? (spec.labelActive || 'Stop LLM')
-                : (spec.label || 'Start LLM');
-        }
-
-        if (running) this._refreshModel();
-        else this._setModel('—');
-    }
-
-    // -----------------------------------------------------------------------
-    // Running model name (from /v1/models)
-    // -----------------------------------------------------------------------
-    _refreshModel() {
-        curlGet('http://localhost:8080/v1/models', (data) => {
-            if (!data) { this._setModel('—'); return; }
-            let name = '';
+        // Update ComfyUI status label (routed through _applyUnitState, not a separate async call)
+        if (unit === 'comfyui.service' && this._comfyuiStatusItem) {
             try {
-                const m = (data.models && data.models[0]) || (data.data && data.data[0]) || {};
-                name = m.name || m.id || m.model || '';
-            } catch { name = ''; }
-            if (name.endsWith('.gguf')) name = name.slice(0, -5);
-            this._setModel(name || 'unknown');
-        });
+                const prefix = this._comfyuiStatusItem.label.text.split(':')[0];
+                this._comfyuiStatusItem.label.text = `${prefix}: ${state || 'unknown'}`;
+            } catch { /* object disposed */ }
+        }
+
+        // Update the specific toggle for this unit
+        if (this._toggles) {
+            const entry = this._toggles.get(unit);
+            if (entry) {
+                try {
+                    const { label } = computeToggleLabel(state, entry.spec);
+                    entry.item.label.text = label;
+                } catch { /* object disposed */ }
+            }
+        }
     }
 
-    _setModel(name) {
-        if (this._modelItem) {
-            this._modelItem.label.text = `Model: ${name}`;
-        }
+    // -----------------------------------------------------------------------
+    // Embedding status (from /api/embeddings via control server)
+    // -----------------------------------------------------------------------
+    _refreshEmbedStatus() {
+        const item = this._embedStatusItem;
+        if (!item) return;
+        const gen = this._generation;
+        httpGet(`${CONTROL_URL}/api/embeddings`, (data) => {
+            if (gen !== this._generation) return;
+            try {
+                if (!data || !Array.isArray(data.embeds)) {
+                    item.label.text = 'Embeddings: unknown';
+                    return;
+                }
+                const running = data.embeds.filter(e => e.running);
+                if (running.length === 0) {
+                    item.label.text = 'Embeddings: inactive';
+                    return;
+                }
+                const names = running.map(e => {
+                    let name = e.key || 'embed';
+                    if (name.endsWith('.gguf')) name = name.slice(0, -5);
+                    return name;
+                });
+                const label = names.length > 2
+                    ? `${names[0]}, ${names[1]} +${names.length - 2}`
+                    : names.join(', ');
+                item.label.text = `Embeddings: ${label}`;
+            } catch {
+                try { item.label.text = 'Embeddings: error'; } catch {}
+            }
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -371,7 +522,8 @@ class LLMHostIndicator extends PanelMenu.Button {
     _refreshModels() {
         const modelMenu = this._modelMenu;
         if (modelMenu) {
-            curlGet(`${CONTROL_URL}/api/models`, (data) => {
+            httpGet(`${CONTROL_URL}/api/models`, (data) => {
+                if (modelMenu !== this._modelMenu) return;
                 if (!data || !Array.isArray(data.models)) return;
                 // Skip rebuild when nothing changed
                 if (modelMenu.menu.numMenuItems > 0 && data.active === this._activeModelKey) return;
@@ -397,38 +549,31 @@ class LLMHostIndicator extends PanelMenu.Button {
     }
 
     _switchModel(key) {
-        curlPost(`${CONTROL_URL}/api/model`, { model: key });
+        httpPost(`${CONTROL_URL}/api/model`, { model: key });
         this._oneShot(2, () => { this._refreshUnit(); this._refreshModels(); });
         this._oneShot(6, () => { this._refreshUnit(); this._refreshModels(); });
     }
 
     // -----------------------------------------------------------------------
-    // Dynamic embeds submenu (from /running)
+    // Dynamic embeds submenu (from /api/embeddings)
     // -----------------------------------------------------------------------
     _refreshEmbeds() {
         const embedMenu = this._embedMenu;
         if (!embedMenu) return;
-        curlGet('http://localhost:8080/running', (data) => {
-            // llama-swap /running returns { running: [{ model, state, cmd, ... }] }.
-            // Embed servers carry no explicit type — identify them by the
-            // --embedding flag in their launch command.
-            const running = data && Array.isArray(data.running) ? data.running : [];
-            const embeds = running.filter(
-                e => e && typeof e.cmd === 'string' && e.cmd.includes('--embedding'));
-            // Snapshot the menu node so a concurrent _rebuildMenu (spec change
-            // mid-poll) doesn't leave us writing into a detached submenu.
+        httpGet(`${CONTROL_URL}/api/embeddings`, (data) => {
             if (embedMenu !== this._embedMenu) return;
+            if (!data || !Array.isArray(data.embeds)) return;
             embedMenu.menu.removeAll();
-            if (embeds.length === 0) {
-                const none = new PopupMenu.PopupMenuItem('No embed servers running', {reactive: false});
+            if (data.embeds.length === 0) {
+                const none = new PopupMenu.PopupMenuItem('No embedding models configured', {reactive: false});
                 embedMenu.menu.addMenuItem(none);
                 return;
             }
-            for (const e of embeds) {
-                const name = e.model || e.name || 'Embed';
-                const state = e.state ? ` (${e.state})` : '';
-                const item = new PopupMenu.PopupMenuItem(`${name}${state}`);
-                item.setSensitive(false); // informational only
+            for (const e of data.embeds) {
+                const mark = e.running ? ' ●' : '';
+                const label = e.exists ? `${e.key}${mark}` : `${e.key} (missing)`;
+                const item = new PopupMenu.PopupMenuItem(label);
+                item.setSensitive(false);
                 embedMenu.menu.addMenuItem(item);
             }
         });
