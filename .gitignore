@@ -5,3 +5,4 @@
 .docker-config/
 package-lock.json
 .claude/worktrees/
+rust/target/

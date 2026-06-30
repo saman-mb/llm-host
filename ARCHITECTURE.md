@@ -188,3 +188,73 @@ only one that's actually missing here — and `scripts/download-model.sh <repo>
 landed in `~/Downloads` by mistake) purely as a *client* and point it at
 `http://127.0.0.1:8080/v1`. Get the chat UI on top of this server. Don't use it
 *as* the server on this hardware.
+
+## ComfyUI — Hardware Compatibility Rules
+
+ComfyUI runs directly on the host (not in Toolbx) via the `comfyui.service`
+systemd user service. Point your browser at `http://127.0.0.1:8188`.
+
+### DO NOT use `--force-fp16` with flow-matching models
+
+Models that use **flow-matching diffusion** (ACE-Step, LTX Video, WAN Video)
+are trained in bfloat16 and produce **garbage output (noise/pops/silence)** when
+forced to float16 on AMD ROCm. The start-up flag `--force-fp16` applies globally
+— it will break any flow-matching model loaded through `UNETLoader` regardless
+of the node's per-model dtype setting.
+
+**Fix:** remove `--force-fp16` from `systemd/comfyui.service`. Each model then
+runs in its stored native dtype. Strix Halo's Radeon 8060S (gfx1151, ROCm 7.2)
+supports bfloat16 natively.
+
+```ini
+# systemd/comfyui.service — correct launch line:
+ExecStart=%h/dev/ComfyUI/.venv/bin/python main.py \
+  --listen 127.0.0.1 --port 8188 \
+  --disable-mmap --bf16-vae --cache-none \
+  --use-pytorch-cross-attention
+```
+
+Note: `--force-fp16` is **not** present. `--bf16-vae` is fine (VAEs benefit
+from bfloat16 for decode fidelity).
+
+### Model folder mapping
+
+ComfyUI nodes look in specific subdirectories under `models/`. Putting a file
+in the wrong folder means it won't appear in dropdowns:
+
+| Node / loader type | Looks in |
+|---|---|
+| `CheckpointLoaderSimple` | `checkpoints/` |
+| `UNETLoader` / `Load Diffusion Model` | `diffusion_models/` |
+| `VAELoader` | `vae/` |
+| `DualCLIPLoader` | `text_encoders/` |
+| `Load Lora` | `loras/` |
+| Load upscale model | `upscale_models/` |
+| Load latent upscale model | `latent_upscale_models/` |
+
+### ACE-Step 1.5 XL base — known-good settings
+
+Reproduced from the official ComfyUI templates and verified working on this
+hardware on 2026-06-18:
+
+| Parameter | Value |
+|---|---|
+| KSampler `cfg` | 2 |
+| KSampler `steps` | 60 |
+| KSampler `sampler` | `euler` |
+| KSampler `scheduler` | `simple` |
+| `ModelSamplingAuraFlow` `shift` | 3 |
+| Text encoder `temperature` | 0.85 |
+| Text encoder `top_p` | 0.9 |
+| Text encoder `top_k` | 0 |
+
+ACE-Step 1.5 uses **different defaults than ACE-Step 1.0** — do not use
+cfg=15 (v1 default) on the 1.5 XL model.
+
+### ace15.py text encoder fix
+
+The ComfyUI source file `comfy/text_encoders/ace15.py` shipped a bug where
+`yaml.dump(sort_keys=True)` alphabetically scrambled metadata sent to the LM.
+This was fixed upstream but if you ever re-clone or re-install, verify line 160
+reads `sort_keys=False`. Symptom: generated audio is half the expected duration
+and consists of popping sounds regardless of sampler settings.

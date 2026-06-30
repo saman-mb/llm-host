@@ -145,38 +145,57 @@ check_type() {
 }
 
 check_type "status"
-check_type "model"
 check_type "toggle"
 check_type "separator"
 check_type "submenu"
-check_label "Restart"
-check_label "Scripts"
-check_label "Switch model"
-check_label "Embeddings"
-check_label "Free ComfyUI VRAM"
+check_label "Launch chat ↗"
 check_label "Tail journal"
 
-# Bind the "Free ComfyUI VRAM" item to its action target so a typo'd path or
-# wrong method can't slip past the label-only check above.
-if echo "$SPEC" | grep -q '\["POST","/api/comfyui/free"'; then
-    pass "'Free ComfyUI VRAM' action targets POST /api/comfyui/free"
-else
-    fail "'Free ComfyUI VRAM' action targets POST /api/comfyui/free"
-fi
+# ComfyUI toggle exists
+if echo "$SPEC" | grep -q '"Start ComfyUI"'; then pass "ComfyUI start toggle present"; else fail "ComfyUI start toggle present"; fi
+if echo "$SPEC" | grep -q '"Stop ComfyUI"'; then pass "ComfyUI stop toggle present"; else fail "ComfyUI stop toggle present"; fi
 
-if echo "$SPEC" | grep -q "sync-opencode-models.sh"; then
-    pass "sync-opencode-models.sh present in spec"
+# ComfyUI toggle has unit field
+if echo "$SPEC" | grep -q '"unit":"comfyui.service"'; then pass "ComfyUI toggle has unit field"; else fail "ComfyUI toggle has unit field"; fi
+
+# Count toggles (should be 2: LLM, ComfyUI — Embeddings is status-only)
+TOGGLE_COUNT=$(echo "$SPEC" | grep -o '"type":"toggle"' | wc -l)
+if [ "$TOGGLE_COUNT" -eq 2 ]; then pass "2 toggle items in spec"; else fail "Expected 2 toggles, got $TOGGLE_COUNT"; fi
+
+# ComfyUI submenu has Free VRAM and Open
+if echo "$SPEC" | grep -q '"Free VRAM"'; then pass "Free VRAM in ComfyUI submenu"; else fail "Free VRAM in ComfyUI submenu"; fi
+
+# ComfyUI submenu has Open ComfyUI
+if echo "$SPEC" | grep -q '"Open ComfyUI ↗"'; then pass "Open ComfyUI in ComfyUI submenu"; else fail "Open ComfyUI in ComfyUI submenu"; fi
+
+# Embeddings has dynamic:embeds
+if echo "$SPEC" | grep -q '"dynamic":"embeds"'; then pass "dynamic:embeds present"; else fail "dynamic:embeds present"; fi
+
+# Models has dynamic:models
+if echo "$SPEC" | grep -q '"dynamic":"models"'; then pass "dynamic:models present"; else fail "dynamic:models present"; fi
+
+# Status items are service-scoped
+if echo "$SPEC" | grep -q '"LLM: checking…"'; then pass "LLM status label present"; else fail "LLM status label present"; fi
+if echo "$SPEC" | grep -q '"ComfyUI: checking…"'; then pass "ComfyUI status label present"; else fail "ComfyUI status label present"; fi
+if echo "$SPEC" | grep -q '"Embeddings: checking…"'; then pass "Embeddings status label present"; else fail "Embeddings status label present"; fi
+
+# Old labels removed (not in new spec)
+if echo "$SPEC" | grep -q '"Restart"'; then fail "Restart removed from top level"; else pass "Restart removed from top level"; fi
+if echo "$SPEC" | grep -q '"Scripts"'; then fail "Scripts removed from top level"; else pass "Scripts removed from top level"; fi
+if echo "$SPEC" | grep -q '"Switch model"'; then fail "Switch model removed (replaced by Models submenu)"; else pass "Switch model removed (replaced by Models submenu)"; fi
+if echo "$SPEC" | grep -q '"Free ComfyUI VRAM"'; then fail "Free ComfyUI VRAM moved to submenu (old label gone)"; else pass "Free ComfyUI VRAM moved to submenu (old label gone)"; fi
+
+# ComfyUI free endpoint bound
+if echo "$SPEC" | grep -q '\["POST","/api/comfyui/free"'; then
+    pass "'Free VRAM' action targets POST /api/comfyui/free"
 else
-    fail "sync-opencode-models.sh present in spec"
+    fail "'Free VRAM' action targets POST /api/comfyui/free"
 fi
 
 if echo "$SPEC" | grep -q "8188"; then pass "ComfyUI URL (8188) present"; else fail "ComfyUI URL (8188) present"; fi
 if echo "$SPEC" | grep -q "8080"; then pass "chat URL (8080) present"; else fail "chat URL (8080) present"; fi
 # Web control dashboard removed — GNOME menu is the only control surface now.
 if echo "$SPEC" | grep -q "8081"; then fail "web control URL (8081) should be gone"; else pass "web control URL (8081) removed"; fi
-
-if echo "$SPEC" | grep -q '"dynamic":"models"'; then pass "dynamic:models submenu present"; else fail "dynamic:models submenu present"; fi
-if echo "$SPEC" | grep -q '"dynamic":"embeds"'; then pass "dynamic:embeds submenu present"; else fail "dynamic:embeds submenu present"; fi
 
 echo ""
 
@@ -256,6 +275,75 @@ elif curl -s --max-time 2 "http://127.0.0.1:3001/api/health" >/dev/null 2>&1; th
     fail "GET /api/ui did not return expected spec JSON"
 else
     echo "  SKIP: control server not running on :3001 — skipping live checks"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
+# Suite 7: Behavioral state logic (pure functions)
+# ---------------------------------------------------------------------------
+echo "-- Suite 7: State logic (label-state-test.mjs) --"
+
+LABEL_TEST="$(dirname "$0")/label-state-test.mjs"
+if [ -f "$LABEL_TEST" ]; then
+    if node "$LABEL_TEST" >/dev/null 2>&1; then
+        LABEL_COUNT=$(node "$LABEL_TEST" 2>&1 | grep -c "PASS:" || true)
+        pass "label-state-test.mjs: $LABEL_COUNT assertions passed"
+    else
+        LABEL_COUNT=$(node "$LABEL_TEST" 2>&1 | grep -c "PASS:" || true)
+        LABEL_FAIL=$(node "$LABEL_TEST" 2>&1 | grep -c "FAIL:" || true)
+        fail "label-state-test.mjs: $LABEL_FAIL of $((LABEL_COUNT + LABEL_FAIL)) failed"
+    fi
+else
+    echo "  SKIP: $LABEL_TEST not found"
+fi
+
+# Static checks: extracted helpers exist in extension.js
+if grep -q "function collectUnits" "$EXT_JS"; then
+    pass "extension.js exports collectUnits helper"
+else
+    fail "extension.js exports collectUnits helper"
+fi
+
+if grep -q "function computeToggleLabel" "$EXT_JS"; then
+    pass "extension.js exports computeToggleLabel helper"
+else
+    fail "extension.js exports computeToggleLabel helper"
+fi
+
+# Verify no remaining sync I/O (_seedUnitStates removed)
+if grep -q "_seedUnitStates" "$EXT_JS"; then
+    fail "extension.js still has _seedUnitStates (should be removed)"
+else
+    pass "extension.js has no _seedUnitStates (sync I/O removed)"
+fi
+
+# Verify _refreshComfyUI removed (routed through _applyUnitState)
+if grep -q "_refreshComfyUI" "$EXT_JS"; then
+    fail "extension.js still has _refreshComfyUI (should be removed)"
+else
+    pass "extension.js has no _refreshComfyUI (routed through _applyUnitState)"
+fi
+
+# Verify ComfyUI status update in _applyUnitState
+if grep -q "comfyui.service.*_comfyuiStatusItem\|_comfyuiStatusItem.*comfyui.service" "$EXT_JS"; then
+    pass "extension.js updates ComfyUI status in _applyUnitState"
+else
+    fail "extension.js updates ComfyUI status in _applyUnitState"
+fi
+
+# Verify embed status uses control server
+if grep -q "CONTROL_URL.*api/embeddings\|api/embeddings" "$EXT_JS"; then
+    pass "extension.js embed status uses control server /api/embeddings"
+else
+    fail "extension.js embed status uses control server /api/embeddings"
+fi
+
+# Verify no direct localhost:8080 references for embed status
+if grep -q "localhost:8080/running" "$EXT_JS"; then
+    fail "extension.js still hits localhost:8080 directly (should use control server)"
+else
+    pass "extension.js has no direct localhost:8080 references"
 fi
 
 echo ""

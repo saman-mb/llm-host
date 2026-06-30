@@ -1,0 +1,15 @@
+[Unit]
+Description=llm-host panel (GTK3 system tray)
+After=llm-host-control.service graphical-session.target
+Wants=llm-host-control.service
+
+[Service]
+Type=simple
+ExecStart=%h/dev/llm-host/rust/target/release/llm-host-panel
+Restart=always
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+
+[Install]
+WantedBy=default.target

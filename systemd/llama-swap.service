@@ -9,7 +9,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/llama-swap --config %h/dev/llm-host/llama-swap.yaml
-Restart=always
+Restart=on-failure
 RestartSec=10
 
 # --- OOM & memory guardrails (W4) ---

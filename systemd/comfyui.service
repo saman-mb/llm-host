@@ -6,11 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/dev/ComfyUI
-# Default dynamic-VRAM behaviour (no --gpu-only/--highvram): the model is
-# released from the iGPU when idle, so this can run persistently without
-# blocking llama-server. The /api/gpu-mode toggle calls ComfyUI's POST /free
-# to force-release VRAM before starting Qwen.
-ExecStart=%h/dev/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188
+Environment=HSA_OVERRIDE_GFX_VERSION=11.5.1
+ExecStart=%h/dev/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188 --disable-mmap --bf16-vae --cache-none --use-pytorch-cross-attention
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:%h/.local/share/comfyui.log

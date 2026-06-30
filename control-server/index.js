@@ -23,15 +23,8 @@ const DEFAULT_UI_SPEC = {
   unit: 'llama-swap.service',
   poll: 10,
   items: [
-    // Status row (non-interactive, updated by extension from systemctl)
-    { type: 'status', label: 'Status: checking…' },
-
-    // Active model line (non-interactive, updated by extension via /v1/models)
-    { type: 'model', label: 'Model: —' },
-
-    { type: 'separator' },
-
-    // Start / Stop toggle — extension flips between start/stop based on unit state
+    // === LLM Section ===
+    { type: 'status', label: 'LLM: checking…' },
     {
       type: 'toggle',
       label: 'Start LLM',
@@ -39,55 +32,44 @@ const DEFAULT_UI_SPEC = {
       action: { kind: 'systemctl', args: ['start', 'llama-swap.service'] },
       actionActive: { kind: 'systemctl', args: ['stop', 'llama-swap.service'] },
     },
-
-    {
-      type: 'action',
-      label: 'Restart',
-      action: { kind: 'systemctl', args: ['restart', 'llama-swap.service'] },
-    },
-
-    // Scripts submenu
     {
       type: 'submenu',
-      label: 'Scripts',
-      items: [
-        {
-          type: 'action',
-          label: 'Sync model → OpenCode',
-          action: { kind: 'script', args: ['sync-opencode-models.sh'] },
-        },
-        {
-          type: 'action',
-          label: 'Sync model → Hermes/OpenCode',
-          action: { kind: 'script', args: ['sync-model.sh'] },
-        },
-        {
-          type: 'action',
-          label: 'Benchmark',
-          action: { kind: 'script', args: ['benchmark.sh'] },
-        },
-        {
-          type: 'action',
-          label: 'Test API',
-          action: { kind: 'script', args: ['test-api.sh'] },
-        },
-        {
-          type: 'action',
-          label: 'Status',
-          action: { kind: 'script', args: ['status.sh'] },
-        },
-      ],
-    },
-
-    // Switch model — populated dynamically from the model registry
-    {
-      type: 'submenu',
-      label: 'Switch model',
+      label: 'Models',
       dynamic: 'models',
       items: [],
     },
 
-    // Embeddings — populated dynamically from the embed registry
+    // === ComfyUI Section ===
+    { type: 'separator' },
+    { type: 'status', label: 'ComfyUI: checking…' },
+    {
+      type: 'toggle',
+      label: 'Start ComfyUI',
+      labelActive: 'Stop ComfyUI',
+      action: { kind: 'http', args: ['POST', '/api/comfyui/start', {}] },
+      actionActive: { kind: 'http', args: ['POST', '/api/comfyui/stop', {}] },
+      unit: 'comfyui.service',
+    },
+    {
+      type: 'submenu',
+      label: 'ComfyUI',
+      items: [
+        {
+          type: 'action',
+          label: 'Free VRAM',
+          action: { kind: 'http', args: ['POST', '/api/comfyui/free', {}] },
+        },
+        {
+          type: 'action',
+          label: 'Open ComfyUI ↗',
+          action: { kind: 'url', args: ['http://127.0.0.1:8188'] },
+        },
+      ],
+    },
+
+    // === Embeddings Section ===
+    { type: 'separator' },
+    { type: 'status', label: 'Embeddings: checking…' },
     {
       type: 'submenu',
       label: 'Embeddings',
@@ -95,22 +77,8 @@ const DEFAULT_UI_SPEC = {
       items: [],
     },
 
-    // Manually release ComfyUI's VRAM back to the iGPU. The LLM and ComfyUI
-    // run in parallel by default; press this only when reclaiming memory for
-    // the coding model. Stop LLM frees the GPU the other way.
-    {
-      type: 'action',
-      label: 'Free ComfyUI VRAM',
-      action: { kind: 'http', args: ['POST', '/api/comfyui/free', {}] },
-    },
-
+    // === Bottom Section ===
     { type: 'separator' },
-
-    {
-      type: 'action',
-      label: 'Open ComfyUI ↗',
-      action: { kind: 'url', args: ['http://127.0.0.1:8188'] },
-    },
     {
       type: 'action',
       label: 'Launch chat ↗',
@@ -197,14 +165,16 @@ async function freeComfyUI() {
 }
 
 // ---------------------------------------------------------------------------
-// API Routes — only what the GNOME extension consumes:
-//   /api/health  liveness probe (used by the test suite)
-//   /api/ui      menu spec
-//   /api/models  model + embed registry
-//   /api/model   switch model
-//   /api/comfyui/free  release ComfyUI VRAM
-// Start/stop/restart, status and scripts are driven by the extension directly
-// (systemctl / gnome-terminal), so they have no server endpoint.
+// API Routes — consumed by the GNOME extension:
+//   /api/health          liveness probe
+//   /api/ui              menu spec
+//   /api/models          model + embed registry
+//   /api/model           switch model
+//   /api/comfyui/start   start comfyui.service
+//   /api/comfyui/stop    stop comfyui.service
+//   /api/comfyui/free    release ComfyUI VRAM
+//   /api/service/:unit   generic service status check
+//   /api/embeddings      list embed models + running state
 // ---------------------------------------------------------------------------
 
 app.get('/api/health', (_req, res) => {
@@ -267,6 +237,64 @@ app.post('/api/model', (req, res) => {
   }
 });
 
+// Start ComfyUI — systemctl start comfyui.service
+app.post('/api/comfyui/start', (_req, res) => {
+  try {
+    execFileSync('systemctl', ['--user', 'start', 'comfyui.service'], { timeout: 10000 });
+    res.json({ success: true, message: 'ComfyUI started.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Stop ComfyUI — systemctl stop comfyui.service
+app.post('/api/comfyui/stop', (_req, res) => {
+  try {
+    execFileSync('systemctl', ['--user', 'stop', 'comfyui.service'], { timeout: 10000 });
+    res.json({ success: true, message: 'ComfyUI stopped.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Generic service status check
+app.get('/api/service/:unit', (req, res) => {
+  const unit = req.params.unit;
+  if (!/^[a-zA-Z0-9._-]+\.service$/.test(unit)) {
+    return res.status(400).json({ success: false, error: 'Invalid unit name' });
+  }
+  try {
+    const state = execFileSync('systemctl', ['--user', 'is-active', unit], {
+      encoding: 'utf-8', timeout: 5000,
+    }).trim();
+    res.json({ active: state === 'active', state });
+  } catch {
+    res.json({ active: false, state: 'inactive' });
+  }
+});
+
+// List embedding models with running state
+app.get('/api/embeddings', (_req, res) => {
+  const reg = readRegistry();
+  if (!reg) return res.status(500).json({ success: false, error: 'Failed to read registry' });
+
+  let running = [];
+  try {
+    const out = execSync('curl -s --max-time 2 http://localhost:8080/running', { encoding: 'utf-8', timeout: 5000 });
+    const data = JSON.parse(out);
+    running = (data.running || []).filter(e => e.cmd && e.cmd.includes('--embedding'));
+  } catch {}
+
+  const runningKeys = new Set(running.map(e => e.model || e.name));
+
+  res.json({
+    embeds: reg.embeds.map(e => ({
+      ...e,
+      running: runningKeys.has(e.key),
+    })),
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
@@ -276,6 +304,10 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`  GET  http://localhost:${PORT}/api/ui`);
   console.log(`  GET  http://localhost:${PORT}/api/models`);
   console.log(`  POST http://localhost:${PORT}/api/model`);
+  console.log(`  POST http://localhost:${PORT}/api/comfyui/start`);
+  console.log(`  POST http://localhost:${PORT}/api/comfyui/stop`);
   console.log(`  POST http://localhost:${PORT}/api/comfyui/free`);
+  console.log(`  GET  http://localhost:${PORT}/api/service/:unit`);
+  console.log(`  GET  http://localhost:${PORT}/api/embeddings`);
   console.log(`  GET  http://localhost:${PORT}/api/health`);
 });

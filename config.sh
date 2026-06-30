@@ -11,9 +11,7 @@ TOOLBOX="llama-vulkan-radv"
 MODELS=(
   "qwen3.6-35b-a3b-ud|$HOME/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q6_K.gguf"
   "qwen3.6-27b|$HOME/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf"
-  "gemma-4-26b|$HOME/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf"
-  "gpt-oss-120b|$HOME/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf"
-  "lfm2.5-8b-a1b|$HOME/models/LFM2.5-8B-A1B/LFM2.5-8B-A1B-Q4_K_M.gguf"
+  "qwen3-coder-next|$HOME/models/qwen3-coder-next/Qwen3-Coder-Next-Q4_K_M-00001-of-00004.gguf"
 )
 
 # --- Embedding model registry ------------------------------------------------
@@ -51,7 +49,6 @@ EXTRA_FLAGS=(
   --cache-ram 0
   --no-cache-idle-slots
   --ctx-checkpoints 0
-  --checkpoint-every-n-tokens -1
 )
 
 # Per-model CONTEXT overrides (keyed by model key). Models with no entry use

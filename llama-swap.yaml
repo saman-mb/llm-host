@@ -9,7 +9,7 @@ macros:
     toolbox run -c llama-vulkan-radv llama-server
     --host 127.0.0.1 --port ${PORT}
     -c 262144 -np 1
-    -ngl 999 -fa 1 --no-mmap --jinja --reasoning auto --reasoning-format auto --reasoning-budget 2048 --timeout 3600 --cache-ram 0 --no-cache-idle-slots --ctx-checkpoints 0 --checkpoint-every-n-tokens -1
+    -ngl 999 -fa 1 --no-mmap --jinja --reasoning auto --reasoning-format auto --reasoning-budget 2048 --timeout 3600 --cache-ram 0 --no-cache-idle-slots --ctx-checkpoints 0
 
 models:
   qwen3.6-35b-a3b-ud:
@@ -20,17 +20,9 @@ models:
     cmd: ${llama} -m /home/saman/models/qwen3.6-27b/Qwen3.6-27B-Q8_0.gguf
     cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/qwen3\.6-27b/Qwen3\.6-27B-Q8_0\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/qwen3\.6-27b/Qwen3\.6-27B-Q8_0\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/qwen3\.6-27b/Qwen3\.6-27B-Q8_0\.gguf"'
 
-  gemma-4-26b:
-    cmd: ${llama} -m /home/saman/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0.gguf
-    cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/gemma-4-26b-a4b/gemma-4-26B-A4B-it-Q8_0\.gguf"'
-
-  gpt-oss-120b:
-    cmd: ${llama} -m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003.gguf
-    cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/gpt-oss-120b/gpt-oss-120b-mxfp4-00001-of-00003\.gguf"'
-
-  lfm2.5-8b-a1b:
-    cmd: ${llama} -m /home/saman/models/LFM2.5-8B-A1B/LFM2.5-8B-A1B-Q4_K_M.gguf
-    cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/LFM2\.5-8B-A1B/LFM2\.5-8B-A1B-Q4_K_M\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/LFM2\.5-8B-A1B/LFM2\.5-8B-A1B-Q4_K_M\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/LFM2\.5-8B-A1B/LFM2\.5-8B-A1B-Q4_K_M\.gguf"'
+  qwen3-coder-next:
+    cmd: ${llama} -m /home/saman/models/qwen3-coder-next/Qwen3-Coder-Next-Q4_K_M-00001-of-00004.gguf
+    cmdStop: toolbox run -c llama-vulkan-radv bash -c 'pkill -TERM -f -- "-m /home/saman/models/qwen3-coder-next/Qwen3-Coder-Next-Q4_K_M-00001-of-00004\.gguf"; for i in 1 2 3 4 5; do pgrep -f -- "-m /home/saman/models/qwen3-coder-next/Qwen3-Coder-Next-Q4_K_M-00001-of-00004\.gguf" >/dev/null || exit 0; sleep 1; done; pkill -KILL -f -- "-m /home/saman/models/qwen3-coder-next/Qwen3-Coder-Next-Q4_K_M-00001-of-00004\.gguf"'
 
   nomic-embed-text:
     cmd: toolbox run -c llama-vulkan-radv llama-server --host 127.0.0.1 --port ${PORT} -m /home/saman/models/nomic-embed-text/nomic-embed-text-v1.5.Q8_0.gguf --embedding -c 8192 -ngl 999
@@ -43,9 +35,7 @@ groups:
     members:
       - qwen3.6-35b-a3b-ud
       - qwen3.6-27b
-      - gemma-4-26b
-      - gpt-oss-120b
-      - lfm2.5-8b-a1b
+      - qwen3-coder-next
 
   embeddings:
     swap: false
